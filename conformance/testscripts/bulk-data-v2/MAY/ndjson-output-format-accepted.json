@@ -1,0 +1,54 @@
+{
+  "resourceType": "TestScript",
+  "id": "bulk-data-v2-ndjson-output-format-accepted",
+  "url": "https://mock.health/conformance/testscripts/bulk-data-v2-ndjson-output-format-accepted",
+  "name": "BulkDataV2NdjsonOutputFormatAccepted",
+  "title": "Bulk Data v2 — _outputFormat=application/fhir+ndjson is accepted on kick-off",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per Bulk Data Access IG v2 §3.2.1, clients MAY pass _outputFormat to negotiate the export file format. application/fhir+ndjson is the default and most widely supported. Servers MAY reject unknown formats; accepting NDJSON explicitly proves the negotiation surface works.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "Bulk Data v2 §3.2 — _outputFormat query parameter",
+      "url": "https://hl7.org/fhir/uv/bulkdata/STU2/export.html#query-parameters"
+    }
+  ],
+  "test": [
+    {
+      "id": "may-accept-ndjson-output-format",
+      "name": "Patient/$export with _outputFormat=application/fhir+ndjson returns 202",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "/$export?_outputFormat=application/fhir%2Bndjson",
+            "requestHeader": [
+              {
+                "field": "Prefer",
+                "value": "respond-async"
+              },
+              {
+                "field": "Accept",
+                "value": "application/fhir+json"
+              }
+            ]
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 202 Accepted",
+            "operator": "equals",
+            "responseCode": "202"
+          }
+        }
+      ]
+    }
+  ]
+}

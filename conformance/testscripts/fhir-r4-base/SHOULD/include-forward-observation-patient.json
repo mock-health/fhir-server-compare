@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-include-forward-observation-patient",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-include-forward-observation-patient",
+  "name": "FhirR4BaseIncludeForwardObservationPatient",
+  "title": "FHIR R4 — _include forward (Observation:patient) returns Bundle without 5xx",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 search.html#include, _include resolves a forward reference (e.g., the Patient referenced by an Observation.subject) and returns it inline in the search Bundle. Servers SHOULD support _include for documented search parameters. A 5xx here indicates the server crashes attempting reference resolution; a 4xx indicates the parameter isn't implemented.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — _include (forward reference resolution)",
+      "url": "https://hl7.org/fhir/R4/search.html#include"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-include-forward-no-5xx",
+      "name": "GET /Observation?_include=Observation:patient returns non-5xx",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Observation",
+            "encodeRequestUrl": false,
+            "params": "?_include=Observation:patient&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is not 5xx",
+            "operator": "notIn",
+            "responseCode": "500,501,502,503,504"
+          }
+        }
+      ]
+    }
+  ]
+}

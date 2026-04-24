@@ -1,0 +1,48 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-silent-ignore",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-silent-ignore",
+  "name": "FhirR4BaseSilentIgnore",
+  "title": "FHIR R4 — Unknown search parameter must be rejected",
+  "status": "active",
+  "experimental": false,
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "A spec-compliant server must NOT silently drop unknown search parameters. The FHIR R4 specification (search.html#errors) requires the server to return an OperationOutcome describing the error. Some servers respond 200 OK with an unfiltered result set, which is the most dangerous form of search-behavior divergence: the client believes its filter applied.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — handling search errors / unknown parameters",
+      "url": "https://hl7.org/fhir/R4/search.html#errors"
+    }
+  ],
+  "purpose": "Detects the silent-ignore footgun. mock.health/blog/fhir-server-compare documents this as the headline finding across 7 servers.",
+  "test": [
+    {
+      "id": "must-reject-unknown-param",
+      "name": "Server rejects unknown search parameter on Patient",
+      "description": "GET Patient?this-is-not-a-real-param=garbage&_count=1 with a deliberately misspelled parameter. A spec-compliant server returns a 4xx with an OperationOutcome. Servers that return 200 are silently filtering — the failure mode this test exists to catch.",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?this-is-not-a-real-param=garbage&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 4xx",
+            "description": "Spec-compliant rejection of unknown search parameter (any 4xx).",
+            "operator": "notEquals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

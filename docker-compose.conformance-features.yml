@@ -1,0 +1,66 @@
+# docker-compose.conformance-features.yml — overlay for conformance runs.
+#
+# Layers ON TOP of docker-compose.yml. Brings up servers with the feature
+# flags enabled that vendors expect "in production" but that the default
+# Docker images leave off. Without this overlay, our conformance matrix
+# measures opt-in features as if the server doesn't support them.
+#
+# (Different file from docker-compose.conformance.yml, which is a vestigial
+# AEGIS-era overlay kept for reference per memory; do not consolidate.)
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.conformance-features.yml up -d
+#   make conformance
+#
+# What this overlay flips, per server:
+#
+#   HAPI    — hapi.fhir.bulk_export_enabled=true plus the supporting batch
+#             scheduler + bulk_data_export framework flags. HAPI ships Bulk
+#             Data but it's opt-in; without these, Patient/$export returns
+#             400 "does not know how to handle GET operation[Patient/$export]".
+#
+#   Aidbox  — BOX_FEATURES_BULK_EXPORT_ENABLED=true + an attempted
+#             local-filesystem destination via BOX_BULK_STORAGE_BACKEND/DIR.
+#             AS OF 2026-04-19: aidboxone:latest still returns 500
+#             "storage-type not specified" with these env vars set, suggesting
+#             the storage destination needs configuration via an Aidbox-Project
+#             resource (admin API) rather than env vars on this image.
+#             Documented as a partial fix in methodology.md; v0.2 will wire
+#             the proper Aidbox-Project storage config via a bootstrap script.
+#
+#   MS FHIR — NOT modified by this overlay.
+#             MS FHIR's SMART discovery requires FHIRServer__Security__Enabled=true,
+#             which also gates ALL non-/metadata API calls behind bearer tokens
+#             and would break loadtest workloads that share this compose file.
+#             The conformance matrix documents MS FHIR's SMART column
+#             explicitly as "compose-config constraint, not a server defect."
+#             v0.2 task: split into a dedicated overlay just for MS FHIR
+#             SMART runs and merge results across passes.
+
+services:
+
+  hapi:
+    environment:
+      - hapi.fhir.fhir_version=R4
+      - hapi.fhir.bulk_export_enabled=true
+      - hapi.fhir.bulk_data_export.enabled=true
+      - hapi.fhir.batch.enabled=true
+      - hapi.fhir.scheduling_disabled=false
+
+  aidbox:
+    environment:
+      AIDBOX_LICENSE: "${AIDBOX_LICENSE:-}"
+      AIDBOX_CLIENT_ID: "${AIDBOX_CLIENT_ID:-basic-client}"
+      AIDBOX_CLIENT_SECRET: "${AIDBOX_CLIENT_SECRET:-secret}"
+      AIDBOX_ADMIN_ID: admin
+      AIDBOX_ADMIN_PASSWORD: "${AIDBOX_ADMIN_PASSWORD:-password}"
+      AIDBOX_PORT: "8888"
+      AIDBOX_FHIR_VERSION: "4.0.1"
+      PGHOST: aidbox-db
+      PGPORT: "5432"
+      PGUSER: aidbox
+      PGPASSWORD: aidbox
+      PGDATABASE: aidbox
+      BOX_FEATURES_BULK_EXPORT_ENABLED: "true"
+      BOX_BULK_STORAGE_BACKEND: "file"
+      BOX_BULK_STORAGE_FILE_DIR: "/tmp/aidbox-bulk"

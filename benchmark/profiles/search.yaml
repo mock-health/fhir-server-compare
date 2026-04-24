@@ -1,0 +1,56 @@
+id: search
+label: Search
+version: v1
+spec_url: /performance/methodology#search
+status: active
+description: |
+  Twenty-three queries every server in the roster can answer cleanly,
+  driven concurrently. Headline metric is the ok-only p50 (median) — 2xx
+  responses only — because fast-rejecting an unsupported query with a
+  400 must not paint a server artificially fast. p95/p99 are retained as
+  tail evidence but aren't the headline; slow cells don't produce enough
+  samples in a 2-minute window for p99 to be stable.
+
+  Coverage spans seven FHIR routes and eight filter shapes:
+    - Patient: gender (token), family/given prefix (string), compound
+      gender+family (AND), family exact (string, live corpus value),
+      read-by-id (direct GET).
+    - Observation: unfiltered paging, token-by-LOINC at varied
+      selectivity (8302-2 Height, 29463-7 Weight, 72514-3 Pain, 8480-6
+      top-level + combo-code), date range, and patient-back-reference.
+    - Condition: patient back-reference + token by SNOMED code.
+    - Procedure: token by SNOMED code.
+    - Encounter: patient / practitioner / location reference filters.
+    - MedicationRequest: patient reference filter.
+    - Metadata: capability_statement.
+
+  Thirteen queries use static params. Ten queries are "runtime-sampled":
+  their `{{placeholder}}` values are drawn fresh per request from pools
+  harvested against the target server at workload-start (patient ids,
+  family/given names, condition/procedure/medication codes, practitioner
+  and location ids). This measures cache-miss behavior honestly instead
+  of hammering a hot 5-patient set.
+
+  Each query gets ~1/23 of the load since the worker picks uniformly at
+  random per request. Per-query p50/p95/p99 is preserved in
+  evidence[].per_verb[] in the round artifact.
+
+  Static queries: capability_statement, observation_search_default,
+  observation_search_total_accurate, observation_by_code,
+  q1_uscore_observation_combo, patient_by_gender,
+  patient_by_family_prefix, patient_by_given_prefix,
+  patient_by_gender_family, observation_by_height,
+  observation_by_weight, observation_by_pain, observation_recent.
+
+  Sampled queries: patient_read_by_id, patient_by_family_exact,
+  observations_for_patient, conditions_for_patient, condition_by_code,
+  procedure_by_code, encounter_by_patient,
+  medication_request_by_patient, encounter_by_practitioner,
+  encounter_by_location.
+
+  Excluded from this workload (tagged `loadtest: skip:*` in queries.yaml):
+  patient_export (async), q6_expand_valueset and q6_lookup_loinc
+  (terminology not loaded), q2_history_type and patient_revinclude_wildcard
+  (asymmetric support), q7_error_unsupported_param (intentional 4xx).
+buckets:
+  - MAY

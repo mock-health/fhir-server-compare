@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-observation-combo-code",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-observation-combo-code",
+  "name": "FhirR4BaseObservationComboCode",
+  "title": "FHIR R4 — `combo-code` parameter matches component codes",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "The FHIR R4 base spec defines Observation-combo-code (token) which matches both Observation.code AND Observation.component.code. Servers SHOULD implement it because it's the only way to find Observations by sub-component code (e.g. systolic BP inside a BP panel). Universally honored across the matrix at the spec level — failure here usually means the server doesn't index component codes at all.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — Observation combo-code search parameter",
+      "url": "https://hl7.org/fhir/R4/observation.html#search"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-accept-combo-code-token",
+      "name": "Observation?combo-code=loinc|... returns 200",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Observation",
+            "encodeRequestUrl": false,
+            "params": "?combo-code=http://loinc.org|8480-6&_count=1&_total=accurate"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

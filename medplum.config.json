@@ -1,0 +1,38 @@
+{
+  "port": 8103,
+  "baseUrl": "http://localhost:8103/",
+  "issuer": "http://localhost:8103/",
+  "jwksUrl": "http://localhost:8103/.well-known/jwks.json",
+  "authorizeUrl": "http://localhost:8103/oauth2/authorize",
+  "tokenUrl": "http://localhost:8103/oauth2/token",
+  "userInfoUrl": "http://localhost:8103/oauth2/userinfo",
+  "storageBaseUrl": "http://localhost:8103/storage/",
+  "binaryStorage": "file:./binary/",
+  "appBaseUrl": "http://localhost:3001/",
+  "emailProvider": "none",
+  "allowedOrigins": "http://localhost:3001,http://localhost:8103",
+  "database": {
+    "host": "medplum-db",
+    "port": 5432,
+    "dbname": "medplum",
+    "username": "medplum",
+    "password": "medplum",
+    "disableSsl": true
+  },
+  "redis": {
+    "host": "medplum-redis",
+    "port": 6379,
+    "password": "medplum"
+  },
+  "logLevel": "INFO",
+  "registerEnabled": true,
+  "maxJsonSize": "100mb",
+  "maxBatchSize": "100mb",
+  "defaultRateLimit": 10000000000,
+  "defaultAuthRateLimit": 10000000000,
+  "defaultFhirQuota": 10000000000,
+  "defaultFhirInteractionsQuota": 10000000000,
+  "shutdownTimeoutMilliseconds": 30000,
+  "recaptchaSiteKey": "6LfHdsYdAAAAAC0uLnnRrDrhcXnziiUwKd8VtLNq",
+  "recaptchaSecretKey": ""
+}

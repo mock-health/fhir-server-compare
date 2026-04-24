@@ -1,0 +1,39 @@
+{
+  "resourceType": "TestScript",
+  "id": "smart-on-fhir-v2-discovery-has-patient-scope",
+  "url": "https://mock.health/conformance/testscripts/smart-on-fhir-v2-discovery-has-patient-scope",
+  "name": "SmartOnFhirV2DiscoveryHasPatientScope",
+  "title": "SMART on FHIR v2 — discovery document advertises patient/* scopes",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per SMART App Launch IG v2 §3, patient-context scopes (patient/*.read, patient/Observation.read, etc.) are the foundation of patient-facing SMART apps. Servers SHOULD list at least one patient/ scope in scopes_supported in the discovery document. Servers without patient/ scopes can only support practitioner-launched workflows.",
+  "test": [
+    {
+      "id": "should-discovery-patient-scope",
+      "name": "Discovery document mentions a patient/ scope",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "encodeRequestUrl": false,
+            "params": "/.well-known/smart-configuration",
+            "requestHeader": [
+              { "field": "Accept", "value": "application/json" }
+            ]
+          }
+        },
+        {
+          "assert": {
+            "label": "responseBody contains patient/ scope prefix",
+            "operator": "contains",
+            "responseBody": "patient/"
+          }
+        }
+      ]
+    }
+  ]
+}

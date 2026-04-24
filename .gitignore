@@ -1,0 +1,37 @@
+# Local config — contains the Aidbox license + any client secrets
+.env
+
+# Internal maintainer-only Makefile with multi-stage ramp orchestration,
+# per-server volume primitives, and host-pinning knobs that only apply to the
+# reference benchmark hardware. The committed `Makefile` wraps the public
+# commands documented in README.md / CONTRIBUTING.md.
+/Makefile.internal
+
+# Claude Code / assistant workflow metadata — local settings, scheduled task
+# lockfiles, permission allowlists. Not relevant to users of the repo.
+.claude/
+
+# Firely Server license file (cryptographically signed, vendor-issued).
+# DO NOT commit. Each developer obtains their own from https://fire.ly.
+firely-license.json
+firely-license*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Round artifacts (conformance + benchmark JSON + methodology notes) under
+# results/rounds/<id>/ are the canonical publishable output — committed.
+# Everything else under results/ is raw per-run data, machine-specific, and
+# regenerable from docker-compose + loadtest/; not committed.
+results/
+!results/rounds/
+!results/sample_run_*/
+# Generated Synthea patient bundles for the load test (can be re-generated)
+data/loadtest/
+# Local Synthea checkout that loadtest/generate.py clones+builds
+synthea/
+.gstack/

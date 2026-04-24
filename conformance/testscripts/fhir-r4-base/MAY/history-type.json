@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-history-type",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-history-type",
+  "name": "FhirR4BaseHistoryType",
+  "title": "FHIR R4 — Type-level history (Patient/_history)",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 http.html#history, type-level history is OPTIONAL. Servers MAY implement it. We test by hitting Patient/_history and asserting 200 — pass means implemented, fail means absent (HAPI, Aidbox, MS FHIR, Blaze, Spark implement; Medplum does not).",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 §3.1 — type-level history interaction",
+      "url": "https://hl7.org/fhir/R4/http.html#history"
+    }
+  ],
+  "test": [
+    {
+      "id": "may-support-type-history",
+      "name": "Patient/_history returns 200",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "history"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200 (history implemented)",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

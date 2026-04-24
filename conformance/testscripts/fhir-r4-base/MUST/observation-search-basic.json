@@ -1,0 +1,51 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-observation-search-basic",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-observation-search-basic",
+  "name": "FhirR4BaseObservationSearchBasic",
+  "title": "FHIR R4 — Observation search returns a Bundle",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Search MUST work. GET /Observation?_count=10 returns 200 with a searchset Bundle, regardless of whether the store has any data. (Empty stores return Bundle.total=0 with no entries.) The Content-Type MUST be application/fhir+json.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — RESTful search interaction",
+      "url": "https://hl7.org/fhir/R4/http.html#search"
+    }
+  ],
+  "test": [
+    {
+      "id": "must-return-bundle",
+      "name": "Observation search returns 200 + fhir+json",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Observation",
+            "encodeRequestUrl": false,
+            "params": "?_count=10"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        },
+        {
+          "assert": {
+            "label": "contentType is fhir+json",
+            "operator": "contains",
+            "contentType": "fhir+json"
+          }
+        }
+      ]
+    }
+  ]
+}

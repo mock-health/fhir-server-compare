@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-sort-descending-lastupdated",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-sort-descending-lastupdated",
+  "name": "FhirR4BaseSortDescendingLastupdated",
+  "title": "FHIR R4 — _sort=-_lastUpdated returns 200 (sort with descending prefix)",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 search.html#sort, _sort accepts a `-` prefix to indicate descending order. _lastUpdated is the canonical sort key for 'most recently changed' UI lists. Servers that reject the `-` prefix or return 4xx force clients to sort client-side, which breaks pagination semantics.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — _sort (with -prefix for descending)",
+      "url": "https://hl7.org/fhir/R4/search.html#sort"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-sort-descending",
+      "name": "GET /Patient?_sort=-_lastUpdated returns 200",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?_sort=-_lastUpdated&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,211 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://mock.health/schema/round-v1.schema.json",
+  "title": "mock.health round artifact (v1)",
+  "description": "Single-file conformance or benchmark round. One per (round_id, kind). Frontend imports this directly; publisher writes it; AEGIS runner produces the conformance variant.",
+  "type": "object",
+  "required": ["round_id", "kind", "schema_version", "generated_at", "methodology_version", "servers", "profiles", "cells"],
+  "additionalProperties": false,
+  "properties": {
+    "round_id":            { "type": "string", "pattern": "^[0-9]{4}-q[1-4]-r[0-9]{3}$", "description": "e.g. 2026-q2-r000" },
+    "kind":                { "type": "string", "enum": ["conformance", "benchmark"] },
+    "schema_version":      { "type": "string", "const": "round-v1" },
+    "generated_at":        { "type": "string", "format": "date-time" },
+    "methodology_version": { "type": "string" },
+    "hardware":            { "$ref": "#/definitions/hardware" },
+    "servers":             { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/server" } },
+    "profiles":            { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/profile" } },
+    "cells":               { "type": "array", "items": { "$ref": "#/definitions/cell" } }
+  },
+  "definitions": {
+    "hardware": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "host":           { "type": "string" },
+        "cpu_model":      { "type": "string" },
+        "cpu_count":      { "type": "integer" },
+        "ram_bytes":      { "type": "integer" },
+        "kernel":         { "type": "string" },
+        "docker_version": { "type": "string" }
+      }
+    },
+    "server": {
+      "type": "object",
+      "required": ["id", "label", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id":             { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "label":          { "type": "string" },
+        "version":        { "type": "string", "description": "e.g. 'HAPI 8.0.0' or 'unknown'" },
+        "image":          { "type": "string", "description": "Container image reference exactly as it appears in docker-compose.yml (e.g. 'hapiproject/hapi:latest'). Pinning to sha256 digests is tracked separately." },
+        "image_digest":   { "type": "string", "description": "Runtime-captured sha256:... of the image that actually ran. Optional — populated when the round-gen pipeline runs `docker image inspect` after a test run." },
+        "source_url":     { "type": "string", "format": "uri", "description": "Canonical upstream project URL — GitHub repo for open-source servers, vendor docs for commercial ones. Used on the ServerPage header so readers can audit what was tested." },
+        "dockerfile_url": { "type": "string", "format": "uri", "description": "URL to the exact Dockerfile used when the server is built locally (e.g. HFS fork). Absent for servers pulled from an upstream registry." },
+        "homepage":       { "type": "string", "format": "uri" },
+        "license":        { "type": "string", "description": "SPDX identifier" }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["id", "label", "buckets", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id":          { "type": "string", "pattern": "^[a-z0-9.-]+$" },
+        "label":       { "type": "string" },
+        "version":     { "type": "string" },
+        "spec_url":    { "type": "string", "format": "uri" },
+        "status":      { "type": "string", "enum": ["active", "not-yet-tested"] },
+        "description": { "type": "string", "description": "1-3 sentence scope statement, especially for surface/subset profiles. Surfaces in the matrix tooltip + profile detail page." },
+        "buckets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["MUST", "SHOULD", "MAY"] }
+        },
+        "applicability": {
+          "type": "object",
+          "description": "Optional per-profile gate: probe executed once per server before running tests. If the probe matches any na_if_* rule, the server's cell for this profile becomes N/A instead of failing.",
+          "additionalProperties": false,
+          "required": ["probe"],
+          "properties": {
+            "probe": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path"],
+              "properties": {
+                "method":  { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"] },
+                "path":    { "type": "string" },
+                "headers": { "type": "object", "additionalProperties": { "type": "string" } }
+              }
+            },
+            "na_if_status":        { "type": "array", "items": { "type": "integer" } },
+            "na_if_body_contains": {
+              "type": "array",
+              "description": "Per-substring rules: N/A if the probe response body contains `substring`. Lets us distinguish 'has a bug' from 'feature requires infra not in this deployment' when both return 5xx.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["substring"],
+                "properties": {
+                  "substring": { "type": "string" },
+                  "reason":    { "type": "string" }
+                }
+              }
+            },
+            "na_reason": { "type": "string", "description": "Default N/A reason used when a na_if_status rule matches, or when a na_if_body_contains rule has no explicit `reason`." }
+          }
+        }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "required": ["server_id", "profile_id", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "server_id":  { "type": "string" },
+        "profile_id": { "type": "string" },
+        "status":     { "type": "string", "enum": ["green", "amber", "red", "grey", "na"], "description": "grey = not-yet-tested; na = not applicable (server does not implement the profile's surface; see na_reason)" },
+        "percentage": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "passed":     { "$ref": "#/definitions/bucketCounts" },
+        "total":      { "$ref": "#/definitions/bucketCounts" },
+        "evidence":   { "type": "array", "items": { "$ref": "#/definitions/evidence" } },
+        "na_reason":  { "type": "string", "description": "Human-readable reason the cell is N/A (present iff status=na)" },
+        "ran_at":     { "type": "string", "format": "date-time" },
+        "max_checkpoint_reached": { "type": "integer", "minimum": 0, "description": "Benchmark cells: largest checkpoint (patient count) the server completed this workload at. Drives the headline value shown in the matrix." },
+        "trust":      { "$ref": "#/definitions/trust", "description": "Benchmark cells: mirrors the trust block of the headline (last) evidence row so the heatmap can decide whether to desaturate the cell without reading into evidence[]." }
+      }
+    },
+    "bucketCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "MUST":   { "type": "integer", "minimum": 0 },
+        "SHOULD": { "type": "integer", "minimum": 0 },
+        "MAY":    { "type": "integer", "minimum": 0 }
+      }
+    },
+    "trust": {
+      "type": "object",
+      "description": "Per-quantile trustworthiness derived from sample count, plus a headline `reliable` flag driven by error rate and throughput. Quantile q requires ~10 samples above it for a stable read, so thresholds rise with q. A quantile below its threshold is still emitted (see pXX_ms) but should be rendered with a caveat. The headline `reliable` flag is what the heatmap should read to decide whether to desaturate — a cell where the server mostly timed out produces numbers that are mathematically computable but practically misleading.",
+      "additionalProperties": false,
+      "required": ["reliable"],
+      "properties": {
+        "reliable":         { "type": "boolean", "description": "Headline trust flag: true iff err_rate <= 0.05 AND ok-throughput >= 1 ok/sec. When false, the heatmap desaturates the cell." },
+        "reason":           { "type": "string", "description": "Short human-readable reason present only when reliable=false (e.g. 'err_rate=94%', 'n_ok=58 at 0.06 ok/s')." },
+        "p50_trustworthy":  { "type": "boolean" },
+        "p75_trustworthy":  { "type": "boolean" },
+        "p90_trustworthy":  { "type": "boolean" },
+        "p95_trustworthy":  { "type": "boolean" },
+        "p99_trustworthy":  { "type": "boolean" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Polymorphic by round.kind. Conformance rounds populate test_id/bucket/outcome; benchmark rounds populate checkpoint + pXX_ms. Field requirement is enforced by the emitter, not the schema, so a single evidence array can carry either shape.",
+      "properties": {
+        "test_id":     { "type": "string", "description": "Conformance-only: TestScript.id" },
+        "test_name":   { "type": "string", "description": "Conformance-only: TestScript.name" },
+        "title":       { "type": "string", "description": "Conformance-only: TestScript.title — human-readable heading for this test" },
+        "description": { "type": "string", "description": "Conformance-only: TestScript.description — prose explaining what the test validates and why it matters" },
+        "spec": {
+          "type": "object",
+          "description": "Conformance-only: structured citation into the FHIR spec / IG that this test exercises. Promoted from TestScript.relatedArtifact[0] so the UI can render each evidence row as a clickable citation.",
+          "additionalProperties": false,
+          "required": ["url"],
+          "properties": {
+            "label": { "type": "string", "description": "Short human-readable section name, e.g. 'FHIR R4 §3.1 read interaction'" },
+            "url":   { "type": "string", "format": "uri", "description": "Deep link to the exact spec anchor on hl7.org" }
+          }
+        },
+        "bucket":      { "type": "string", "enum": ["MUST", "SHOULD", "MAY"] },
+        "outcome":     { "type": "string", "enum": ["pass", "fail", "skip", "error", "na"], "description": "Conformance-only: na = not applicable (profile-level applicability probe failed; test was not run)" },
+        "details":     { "type": "string", "description": "first failure message or notes" },
+        "source":      { "type": "string", "enum": ["aegis-testscript-engine", "inferno", "compare.py", "manual", "loadtest-ramp"] },
+        "ran_at":      { "type": "string", "format": "date-time" },
+        "report_path": { "type": "string", "description": "relative path to TestReport JSON in the round dir" },
+        "checkpoint":  { "type": "integer", "minimum": 0, "description": "Benchmark-only: ingest checkpoint (patient count) at which this evidence row was captured" },
+        "p50_ms":      { "type": "number", "minimum": 0, "description": "Benchmark-only: 50th percentile (median) latency in milliseconds — headline metric for the heatmap and log-scaling curve (ok-only for search; all-requests for ingest/crud)" },
+        "p75_ms":      { "type": "number", "minimum": 0, "description": "Benchmark-only: 75th percentile latency — survives small samples better than p95 (n_ok >= 40 is usually enough for ±10%). Paired with p50 lets readers see spread without demanding tail-stable samples." },
+        "p90_ms":      { "type": "number", "minimum": 0, "description": "Benchmark-only: 90th percentile latency — trustworthy at n_ok >= 100 (see trust.p90_trustworthy)." },
+        "p95_ms":      { "type": "number", "minimum": 0, "description": "Benchmark-only: 95th percentile latency — tail evidence, not the headline" },
+        "p99_ms":      { "type": "number", "minimum": 0, "description": "Benchmark-only: 99th percentile latency — tail evidence; retained for inspection but not the headline because 2-minute runs can be sample-starved on slow cells" },
+        "ops_per_s":   { "type": "number", "minimum": 0, "description": "Benchmark-only: throughput (ingest=resources_accepted/sec, crud=ops/sec, search=queries/sec)" },
+        "ops_ok_per_s": { "type": "number", "minimum": 0, "description": "Benchmark-only: throughput of successful responses only (ok-count / active-elapsed). The publishable-throughput signal — a server that timed out on 90% of requests should not get credit for its total request rate." },
+        "n_ok":        { "type": "integer", "minimum": 0, "description": "Benchmark-only: count of successful (ok=true) requests backing the pXX_ms values when the headline uses ok-only stream (search); count of all records when the headline uses the full stream (CRUD)." },
+        "n_err":       { "type": "integer", "minimum": 0, "description": "Benchmark-only: count of failed (ok=false) requests, including 60s worker timeouts. A high value is a legitimate 'server could not complete the workload' signal, not a harness bug." },
+        "error_rate":  { "type": "number", "minimum": 0, "maximum": 1, "description": "Benchmark-only: fraction of requests that returned non-2xx (or timed out) at this checkpoint" },
+        "trust":       { "$ref": "#/definitions/trust", "description": "Benchmark-only: per-quantile trustworthiness for this evidence row plus a headline `reliable` flag." },
+        "crud_phases": {
+          "type": "array",
+          "description": "Benchmark-only, CRUD cells only: per-verb phase accounting (C/R/U/V/D/prewarm) — planned cap, actual samples, elapsed ms, and stop_reason. Lets the per-verb reliability flag be surfaced in the UI without recomputing from the jsonl.",
+          "items": { "type": "object", "additionalProperties": true }
+        },
+        "per_verb":    {
+          "type": "array",
+          "description": "Benchmark-only: per-verb breakdown of this checkpoint. Enables chart drill-down by individual query (search) or op (CRUD: C/R/U/D). Percentiles follow the same ok-only-vs-all-requests convention as the top-level fields.",
+          "items": {
+            "type": "object",
+            "required": ["verb", "p50_ms"],
+            "properties": {
+              "verb":      { "type": "string", "description": "Query ID (search) or single-letter op (CRUD: C/R/U/D)" },
+              "p50_ms":    { "type": "number", "minimum": 0 },
+              "p75_ms":    { "type": "number", "minimum": 0 },
+              "p90_ms":    { "type": "number", "minimum": 0 },
+              "p95_ms":    { "type": "number", "minimum": 0 },
+              "p99_ms":    { "type": "number", "minimum": 0 },
+              "ops_per_s":   { "type": "number", "minimum": 0 },
+              "ops_ok_per_s":{ "type": "number", "minimum": 0 },
+              "n":         { "type": "integer", "minimum": 0, "description": "Sample count backing this verb's percentiles" },
+              "n_ok":      { "type": "integer", "minimum": 0 },
+              "n_err":     { "type": "integer", "minimum": 0 },
+              "error_rate":{ "type": "number", "minimum": 0, "maximum": 1 },
+              "trust":     { "$ref": "#/definitions/trust" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

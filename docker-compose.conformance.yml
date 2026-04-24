@@ -1,0 +1,79 @@
+# Conformance test runner stack — overlay on top of docker-compose.yml.
+#
+# Adds:
+#   - testscript-engine        : AEGIS executor (one-shot Ruby CLI invoked by
+#                                loadtest/conformance/run.py per server)
+#   - auth-proxy-aidbox        : injects HTTP Basic header for Aidbox
+#   - auth-proxy-medplum       : injects OAuth2 Bearer token for Medplum
+#                                (refreshes before expiry)
+#
+# Anonymous servers (HAPI, MS FHIR, Blaze, Spark, HFS) are reached directly
+# by service name on the shared docker network — no proxy needed.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.conformance.yml up -d \
+#       auth-proxy-aidbox auth-proxy-medplum
+#   make conformance-run                  # invokes loadtest/conformance/run.py
+#
+# The testscript-engine container runs one-shot per (server, testscript) pair;
+# we don't `up -d` it. The Python driver builds the image and invokes it with
+# `docker compose run --rm`.
+
+services:
+
+  testscript-engine:
+    build:
+      context: ./conformance-docker
+      dockerfile: Dockerfile.testscript-engine
+      args:
+        TESTSCRIPT_ENGINE_REF: main
+    image: fhir-compare-testscript-engine:0.1.0
+    container_name: fhir-compare-testscript-engine
+    profiles: ["conformance"]
+    # Run as host UID/GID so generated TestReport files are writable from the
+    # host (avoids root-owned bind-mount outputs).
+    user: "1000:1000"
+    # NOTE: AEGIS testscript-engine resolves --testscript_path / --testreport_path
+    # relative to its WORKDIR (/opt/testscript-engine), even when given an
+    # absolute path — it strips the leading slash. So we mount under that
+    # WORKDIR and the Python driver passes RELATIVE paths.
+    volumes:
+      - ./conformance/testscripts:/opt/testscript-engine/work/testscripts:ro
+      - ./results/conformance:/opt/testscript-engine/work/testreports
+    # No `restart`: this is invoked one-shot by `docker compose run --rm`.
+    # Default ENTRYPOINT is `bundle exec bin/testscript_engine` — driver
+    # supplies `execute --testscript_path ... --testreport_path ... --server_url ...`.
+
+  auth-proxy-aidbox:
+    build:
+      context: ./conformance-docker
+      dockerfile: Dockerfile.auth-proxy
+    image: fhir-compare-auth-proxy:0.1.0
+    container_name: fhir-compare-auth-proxy-aidbox
+    profiles: ["conformance"]
+    environment:
+      AUTH_TYPE: basic
+      UPSTREAM_URL: http://aidbox:8888/fhir
+      AUTH_USER: "${AIDBOX_CLIENT_ID:-basic-client}"
+      AUTH_PASS: "${AIDBOX_CLIENT_SECRET:-secret}"
+      LISTEN_PORT: "8000"
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  auth-proxy-medplum:
+    image: fhir-compare-auth-proxy:0.1.0
+    container_name: fhir-compare-auth-proxy-medplum
+    profiles: ["conformance"]
+    depends_on:
+      - auth-proxy-aidbox  # share the build target; first container builds image
+    environment:
+      AUTH_TYPE: client_credentials
+      UPSTREAM_URL: http://medplum:8103/fhir/R4
+      AUTH_TOKEN_URL: "${MEDPLUM_TOKEN_URL:-http://medplum:8103/oauth2/token}"
+      AUTH_CLIENT_ID: "${MEDPLUM_CLIENT_ID:-}"
+      AUTH_CLIENT_SECRET: "${MEDPLUM_CLIENT_SECRET:-}"
+      LISTEN_PORT: "8000"
+    expose:
+      - "8000"
+    restart: unless-stopped

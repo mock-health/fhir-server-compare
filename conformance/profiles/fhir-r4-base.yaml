@@ -1,0 +1,18 @@
+id: fhir-r4-base
+label: FHIR R4 base spec
+version: "4.0.1"
+spec_url: https://hl7.org/fhir/R4/index.html
+status: active
+description: |
+  Tests the FHIR R4 core REST API surface — CapabilityStatement discovery
+  (https://hl7.org/fhir/R4/capabilitystatement.html), the read interaction
+  (http.html#read), search semantics for every resource (search.html, covering
+  _id, token, date, string modifiers, _include / _revinclude, _sort, _summary,
+  _total, composite and chained parameters), and optional terminology /
+  history / bulk-data operations at the MAY level. MUST failures indicate a
+  server that breaks base-spec conformance; SHOULD failures indicate real
+  feature gaps; MAY is informational.
+buckets:
+  - MUST
+  - SHOULD
+  - MAY

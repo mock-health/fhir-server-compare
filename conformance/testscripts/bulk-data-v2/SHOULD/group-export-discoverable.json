@@ -1,0 +1,54 @@
+{
+  "resourceType": "TestScript",
+  "id": "bulk-data-v2-group-export-discoverable",
+  "url": "https://mock.health/conformance/testscripts/bulk-data-v2-group-export-discoverable",
+  "name": "BulkDataV2GroupExportDiscoverable",
+  "title": "Bulk Data v2 — Group/[id]/$export route is discoverable",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per Bulk Data Access IG v2 §3.3, servers SHOULD support Group-level $export so clients can extract a defined cohort. We test discoverability by hitting Group/$export (no id) — a routed server returns 4xx (e.g., id required) rather than 404 (route unknown). 404 means group export is not implemented at all.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "Bulk Data v2 §3.3 — Group-level export endpoint",
+      "url": "https://hl7.org/fhir/uv/bulkdata/STU2/export.html#endpoint---group-of-patients"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-route-group-export",
+      "name": "Group/$export endpoint is routed (not 404)",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Group",
+            "encodeRequestUrl": false,
+            "params": "/$export",
+            "requestHeader": [
+              {
+                "field": "Prefer",
+                "value": "respond-async"
+              },
+              {
+                "field": "Accept",
+                "value": "application/fhir+json"
+              }
+            ]
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is not 404",
+            "operator": "notEquals",
+            "responseCode": "404"
+          }
+        }
+      ]
+    }
+  ]
+}

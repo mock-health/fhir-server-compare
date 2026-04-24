@@ -1,0 +1,39 @@
+{
+  "resourceType": "TestScript",
+  "id": "smart-on-fhir-v2-discovery-advertises-backend-services",
+  "url": "https://mock.health/conformance/testscripts/smart-on-fhir-v2-discovery-advertises-backend-services",
+  "name": "SmartOnFhirV2DiscoveryAdvertisesBackendServices",
+  "title": "SMART on FHIR v2 — discovery advertises Backend Services (client_credentials)",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "SMART Backend Services (the JWT-signed client_credentials flow defined in SMART App Launch IG v2 §6) is the canonical mechanism for headless server-to-server access — needed for Bulk Data and many integrations. Servers MAY support it; presence of client_credentials in grant_types_supported (or token_endpoint_auth_methods_supported including private_key_jwt) is the discovery signal.",
+  "test": [
+    {
+      "id": "may-discovery-backend-services",
+      "name": "Discovery document mentions client_credentials grant",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "encodeRequestUrl": false,
+            "params": "/.well-known/smart-configuration",
+            "requestHeader": [
+              { "field": "Accept", "value": "application/json" }
+            ]
+          }
+        },
+        {
+          "assert": {
+            "label": "responseBody contains client_credentials",
+            "operator": "contains",
+            "responseBody": "client_credentials"
+          }
+        }
+      ]
+    }
+  ]
+}

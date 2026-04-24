@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-string-modifier-contains",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-string-modifier-contains",
+  "name": "FhirR4BaseStringModifierContains",
+  "title": "FHIR R4 — string :contains modifier supported on Patient.name",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 search.html#string, string search defaults to startsWith semantics. The `:contains` modifier SHOULD be supported for substring search. Many clinical autocompletes depend on `:contains`; servers that reject the modifier (4xx) or silently fall back to startsWith produce subtle UX bugs.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — string search modifiers (:contains)",
+      "url": "https://hl7.org/fhir/R4/search.html#string"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-string-contains-modifier",
+      "name": "GET /Patient?name:contains=mit returns 200 (server accepts :contains)",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?name:contains=mit&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "resourceType": "TestScript",
+  "id": "smart-on-fhir-v2-discovery-has-required-fields",
+  "url": "https://mock.health/conformance/testscripts/smart-on-fhir-v2-discovery-has-required-fields",
+  "name": "SmartOnFhirV2DiscoveryHasRequiredFields",
+  "title": "SMART on FHIR v2 — discovery document includes required fields",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per SMART App Launch IG v2 §5.2, the SMART configuration document SHALL include authorization_endpoint, token_endpoint, and capabilities. Without these, no SMART client can complete the authorization code flow. We assert each appears in the response body — a substring match is sufficient since these are well-known JSON keys.",
+  "test": [
+    {
+      "id": "must-discovery-has-required-fields",
+      "name": "Discovery document mentions authorization_endpoint, token_endpoint, capabilities",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "encodeRequestUrl": false,
+            "params": "/.well-known/smart-configuration",
+            "requestHeader": [
+              { "field": "Accept", "value": "application/json" }
+            ]
+          }
+        },
+        {
+          "assert": {
+            "label": "responseBody contains authorization_endpoint",
+            "operator": "contains",
+            "responseBody": "authorization_endpoint"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseBody contains token_endpoint",
+            "operator": "contains",
+            "responseBody": "token_endpoint"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseBody contains capabilities",
+            "operator": "contains",
+            "responseBody": "capabilities"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-revinclude-wildcard-no-5xx",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-revinclude-wildcard-no-5xx",
+  "name": "FhirR4BaseRevincludeWildcardNo5xx",
+  "title": "FHIR R4 — _revinclude=* must not return 5xx",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "The wildcard form of _revinclude is implementation-defined: a server MAY support it (HAPI, MS FHIR, Blaze do) or MAY reject it (Medplum returns a 400). What it MUST NOT do is return a 5xx on a client-side error — that violates HTTP semantics for client-fault rejections. Aidbox and Spark fail this assertion (they return 500 on what is clearly a client-side request shape problem).",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — _revinclude (reverse reference resolution)",
+      "url": "https://hl7.org/fhir/R4/search.html#revinclude"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-not-5xx-on-wildcard",
+      "name": "Patient?_revinclude=* responds without a 5xx",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?_count=5&_revinclude=*"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode not in 5xx range",
+            "operator": "notIn",
+            "responseCode": "500,501,502,503,504,505"
+          }
+        }
+      ]
+    }
+  ]
+}

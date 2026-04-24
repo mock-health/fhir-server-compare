@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-has-reverse-chaining",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-has-reverse-chaining",
+  "name": "FhirR4BaseHasReverseChaining",
+  "title": "FHIR R4 — _has reverse chaining returns 200 (no 5xx)",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 search.html#has, _has lets clients filter parents by predicates on their referencing children (e.g., 'Patients who have an Observation with code X'). It's the canonical reverse-chaining mechanism. MAY-level — many servers don't implement it. A 5xx indicates the parser crashes; 4xx indicates not implemented.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — _has (reverse chaining)",
+      "url": "https://hl7.org/fhir/R4/search.html#has"
+    }
+  ],
+  "test": [
+    {
+      "id": "may-has-reverse-chaining",
+      "name": "GET /Patient?_has:Observation:patient:code=http://loinc.org|8480-6 returns non-5xx",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?_has:Observation:patient:code=http://loinc.org|8480-6&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is not 5xx",
+            "operator": "notIn",
+            "responseCode": "500,501,502,503,504"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-bulk-data-export",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-bulk-data-export",
+  "name": "FhirR4BaseBulkDataExport",
+  "title": "FHIR R4 — Patient/$export (Bulk Data Access IG v2)",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Patient-level $export is the canonical Bulk Data operation. A spec-compliant implementation returns 202 Accepted with a Content-Location polling URL (Bulk Data Access IG v2). Servers that don't implement Bulk Data return 4xx; a 5xx indicates a misconfigured implementation (e.g. storage-type not configured).",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "Bulk Data Access IG v2 — kick-off request",
+      "url": "https://hl7.org/fhir/uv/bulkdata/STU2/export.html#bulk-data-kick-off-request"
+    }
+  ],
+  "test": [
+    {
+      "id": "may-support-export",
+      "name": "Patient/$export returns 202 (Bulk Data implemented)",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "/$export",
+            "requestHeader": [
+              {
+                "field": "Prefer",
+                "value": "respond-async"
+              },
+              {
+                "field": "Accept",
+                "value": "application/fhir+json"
+              }
+            ]
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 202 Accepted",
+            "operator": "equals",
+            "responseCode": "202"
+          }
+        }
+      ]
+    }
+  ]
+}

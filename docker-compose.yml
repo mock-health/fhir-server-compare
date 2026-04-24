@@ -1,0 +1,319 @@
+# docker-compose.yml — brings up the 7 self-hosted FHIR servers this repo
+# benchmarks against. All are open-source and run locally; no managed services
+# or paid licenses required.
+#
+# Quickstart:
+#     cp .env.example .env      # fill in AIDBOX_LICENSE (free, aidbox.app/signup)
+#     docker compose up -d
+#     # wait ~60s for all services to come up
+#     python load_bundle.py --server hapi
+#     python load_bundle.py --server aidbox
+#     python load_bundle.py --server medplum
+#     python load_bundle.py --server msfhir
+#     python compare.py
+#
+# Images are pinned by sha256 digest so the matrix is reproducible bit-for-bit
+# 12 months from now. The human-readable tag at pin time is in the comment
+# beside each image. To refresh after upstream releases:
+#   docker pull <image>:<tag>
+#   docker inspect --format '{{range .RepoDigests}}{{.}}{{"\n"}}{{end}}' <image>:<tag>
+# and update the digest below.
+#
+# Ports (match defaults in servers.yaml):
+#   8080 — HAPI
+#   8103 — Medplum server
+#   8081 — Microsoft FHIR Server
+#   8888 — Aidbox
+#   8082 — Blaze (Round 1 addition)
+#   8084 — Spark (Round 1 addition, BSD-3, Incendi-maintained Firely-lineage server)
+#   8085 — HFS (Round 2 spike, MIT, Rust, HeliosSoftware; Postgres backend)
+#
+# Internal service deps (postgres, redis, sqlserver) are not exposed on the
+# host; they only need to be reachable from their server within the compose
+# network.
+
+services:
+
+  # --- HAPI ---------------------------------------------------------------
+  # Permissive baseline. In-memory H2 by default, fine for the 90-second
+  # reproducer. No auth.
+  hapi:
+    image: hapiproject/hapi@sha256:34c86fd5805df77c2b9d9c10538050b16ac3dc244352da0ebe4717f931330775  # :latest (HAPI 8.8.0-1) as of 2026-04-20
+    container_name: fhir-compare-hapi
+    ports:
+      - "8080:8080"
+    environment:
+      - hapi.fhir.fhir_version=R4
+      # Bulk Data Access v2: HAPI ships with bulk export off by default. We
+      # enable it so the conformance matrix measures a like-for-like surface
+      # against other servers; binary_storage is the companion requirement
+      # (NDJSON output files go through the Binary resource pipeline).
+      - hapi.fhir.bulk_export_enabled=true
+      - hapi.fhir.binary_storage_enabled=true
+    restart: unless-stopped
+
+  # --- Aidbox -------------------------------------------------------------
+  # Free dev license required (register at aidbox.app, pasted into .env as
+  # AIDBOX_LICENSE). aidboxone bundles storage — no external Postgres needed
+  # for the dev tier.
+  aidbox:
+    image: healthsamurai/aidboxone@sha256:8af7d51a00832a853ffd25255fb9c569de1a4ee62aef877afe20847e873b5fa4  # :latest (Aidbox 2603) as of 2026-04-20
+    container_name: fhir-compare-aidbox
+    depends_on:
+      - aidbox-db
+    ports:
+      - "8888:8888"
+    environment:
+      AIDBOX_LICENSE: "${AIDBOX_LICENSE:-}"
+      AIDBOX_CLIENT_ID: "${AIDBOX_CLIENT_ID:-basic-client}"
+      AIDBOX_CLIENT_SECRET: "${AIDBOX_CLIENT_SECRET:-secret}"
+      AIDBOX_ADMIN_ID: admin
+      AIDBOX_ADMIN_PASSWORD: "${AIDBOX_ADMIN_PASSWORD:-password}"
+      AIDBOX_PORT: "8888"
+      AIDBOX_FHIR_VERSION: "4.0.1"
+      PGHOST: aidbox-db
+      PGPORT: "5432"
+      PGUSER: aidbox
+      PGPASSWORD: aidbox
+      PGDATABASE: aidbox
+    restart: unless-stopped
+
+  aidbox-db:
+    image: healthsamurai/aidboxdb@sha256:e59d1afa672dec0288ee1d5005599c61eac06f4ce9558a5cba02042ecacdedf7  # :16 as of 2026-04-20
+    container_name: fhir-compare-aidbox-db
+    environment:
+      POSTGRES_USER: aidbox
+      POSTGRES_PASSWORD: aidbox
+      POSTGRES_DB: aidbox
+    volumes:
+      - aidbox-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # --- Medplum ------------------------------------------------------------
+  # Permissive like HAPI. Server + Postgres + Redis. Default config uses a
+  # bootstrap project; the script load_bundle.py --server medplum talks to
+  # /fhir/R4 using client_credentials obtained from /oauth2/token.
+  medplum:
+    image: medplum/medplum-server@sha256:7a5f37157a1b16f983402bae9bfbcdc858431464b4f5c0cc33b23d22629d546b  # :latest (Medplum 5.1.8) as of 2026-04-20
+    container_name: fhir-compare-medplum
+    depends_on:
+      - medplum-db
+      - medplum-redis
+    ports:
+      - "8103:8103"
+    volumes:
+      # Medplum expects medplum.config.json in its working directory; env-var
+      # config alone is not supported for this version. The file lives at
+      # repo root and is bind-mounted read-only.
+      - ./medplum.config.json:/usr/src/medplum/medplum.config.json:ro
+    restart: unless-stopped
+
+  medplum-db:
+    image: postgres@sha256:468e1f126ca5af849799cda06ac9b03d8090aae9fa5163408b3e8da44fad0702  # postgres:16 as of 2026-04-20
+    container_name: fhir-compare-medplum-db
+    environment:
+      POSTGRES_USER: medplum
+      POSTGRES_PASSWORD: medplum
+      POSTGRES_DB: medplum
+    volumes:
+      - medplum-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  medplum-redis:
+    image: redis@sha256:24ea35ee039d7345bef2377611e3b1a615231746de4cfea74c1414575ee56167  # redis:7 as of 2026-04-20
+    container_name: fhir-compare-medplum-redis
+    restart: unless-stopped
+
+  # Medplum web UI. Only needed for the one-time bootstrap: register first
+  # user, create a ClientApplication, paste its id/secret into .env. After
+  # that, compare.py talks to medplum-server directly via client_credentials
+  # and this service can stay down.
+  medplum-app:
+    image: medplum/medplum-app@sha256:7f558f36226fd7acd2e881abd1b726e0cb12a57881c0c32befd204824c195f64  # :latest as of 2026-04-20
+    container_name: fhir-compare-medplum-app
+    depends_on:
+      - medplum
+    ports:
+      - "3001:3000"
+    environment:
+      MEDPLUM_BASE_URL: "http://localhost:8103/"
+    restart: unless-stopped
+
+  # --- Microsoft FHIR Server (OSS) ----------------------------------------
+  # The OSS engine that powers Azure FHIR. Runs with a SQL Server sidecar,
+  # auth disabled for dev. Internal port 8080 → host 8081 (avoid HAPI clash).
+  msfhir:
+    image: mcr.microsoft.com/healthcareapis/r4-fhir-server@sha256:945dd040e868f43de292fe6878ddb44be853042a51b747cc6b021e7c8edb9e34  # :latest (4.0.728) as of 2026-04-20
+    container_name: fhir-compare-msfhir
+    depends_on:
+      - msfhir-db
+    ports:
+      - "8081:8080"
+    environment:
+      SAPASSWORD: "${MSSQL_SA_PASSWORD:-Fhir_Compare_Pass1!}"
+      FHIRServer__Security__Enabled: "false"
+      # TrustServerCertificate=True + Encrypt=False are required because the
+      # default SQL Server 2022 image ships with a self-signed cert and the
+      # modern .NET SqlClient (in the msfhir image) enforces cert validation
+      # by default. Without this, the msfhir container boot-loops with a
+      # "certificate chain not trusted" TLS handshake error.
+      SqlServer__ConnectionString: "Server=tcp:msfhir-db,1433;Initial Catalog=FHIR;Persist Security Info=False;User ID=sa;Password=${MSSQL_SA_PASSWORD:-Fhir_Compare_Pass1!};MultipleActiveResultSets=False;Connection Timeout=30;TrustServerCertificate=True;Encrypt=False;"
+      SqlServer__AllowDatabaseCreation: "true"
+      SqlServer__Initialize: "true"
+      SqlServer__SchemaOptions__AutomaticUpdatesEnabled: "true"
+      DataStore: "SqlServer"
+    restart: unless-stopped
+
+  msfhir-db:
+    image: mcr.microsoft.com/mssql/server@sha256:2dca9ee5cd5316952d9b6ef4a0c088ac95b55e3502accdda0fc12ad6ede7b905  # :2022-latest as of 2026-04-20
+    container_name: fhir-compare-msfhir-db
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Fhir_Compare_Pass1!}"
+      MSSQL_PID: "Developer"
+    volumes:
+      - msfhir-data:/var/opt/mssql
+    restart: unless-stopped
+
+  # --- Blaze (Round 1 addition) -------------------------------------------
+  # Open-source FHIR R4 server in Clojure. Standalone variant uses RocksDB
+  # at /app/data — no separate DB sidecar. Listens on 8080 internally;
+  # mapped to host 8082 to avoid HAPI's port. FHIR base is /fhir. No auth.
+  # JAVA_TOOL_OPTIONS controls heap; bump for 100K+ patient runs.
+  blaze:
+    image: samply/blaze@sha256:4148d6cc9daf1f7237270878535d176b1e24b8d4092dcf636d42778c3a49dbc8  # :latest (Blaze 1.6.2) as of 2026-04-20
+    container_name: fhir-compare-blaze
+    ports:
+      - "8082:8080"
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx8g"
+      BASE_URL: "http://localhost:8082"
+      LOG_LEVEL: "info"
+    volumes:
+      - blaze-data:/app/data
+    restart: unless-stopped
+
+  # --- Spark (Round 1 addition) -------------------------------------------
+  # BSD-3 open-source FHIR server originally created by Firely, now maintained
+  # by Incendi (the "Incindi" entry in Darren Devitt's open-source servers
+  # list — same project). C#/.NET, MongoDB-backed. Default exposes /fhir on
+  # internal port 80, mapped to host 8084. No auth, no license file needed.
+  spark:
+    image: sparkfhir/spark@sha256:179fcbeb79f0408f5f2f19d41f47d5d2e135d13e9340c5ef8b3bccfe0295495f  # :r4-latest (Spark 2.4.1-r4) as of 2026-04-20
+    container_name: fhir-compare-spark
+    depends_on:
+      - spark-db
+    ports:
+      - "8084:80"
+    environment:
+      StoreSettings__ConnectionString: "mongodb://root:CosmicTopSecret@spark-db:27017/spark?authSource=admin"
+      SparkSettings__Endpoint: "http://localhost:8084/fhir"
+    restart: unless-stopped
+
+  spark-db:
+    image: sparkfhir/mongo@sha256:1cca609058380b825e1fffe9560098b7bec0b07a1c6562f388b0e4d2bf278938  # :r4-latest as of 2026-04-20
+    container_name: fhir-compare-spark-db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: CosmicTopSecret
+    volumes:
+      - spark-data:/data/db
+      # MongoDB index bootstrap. The official mongo image runs every .js/.sh
+      # under /docker-entrypoint-initdb.d/ on the FIRST startup of a fresh
+      # data volume. We mount our index-creation script there so any fresh
+      # `make loadtest-reset-one SERVER=spark` produces a properly-indexed DB.
+      # See spark-mongo-init/01-create-indexes.js for the rationale.
+      - ./spark-mongo-init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+
+  # --- HFS (Round 2 spike) ------------------------------------------------
+  # Helios FHIR Server — MIT-licensed, Rust. Documented production path is
+  # Postgres (doc store) + Elasticsearch (search index), so we run the
+  # split-backend (HFS_STORAGE_BACKEND=postgres-elasticsearch) to match the
+  # vendor's own recommendation. Internal port 8080 → host 8085.
+  # CapabilityStatement at root /metadata.
+  #
+  # Image is built locally from hfs-docker/Dockerfile.fork, which compiles
+  # HFS from our fork (mock-health/hfs @ fix/rest-body-limit-layer) with
+  # the PR #68 body-size fix applied. Without that fix, HFS silently caps
+  # bundles at axum's 2 MiB default regardless of HFS_MAX_BODY_SIZE — ~50%
+  # rejection rate on Synthea bundles. The fork-built binary is packaged
+  # on debian:trixie-slim (GLIBC 2.41), which also sidesteps upstream's
+  # glibc-mismatch packaging bug (published binary is 2.38+ on a 2.36
+  # runtime). See hfs-docker/Dockerfile.fork for rationale.
+  #
+  # To benchmark "as shipped" instead, swap to hfs-docker/Dockerfile
+  # (reuses the upstream binary).
+  hfs:
+    image: fhir-compare-hfs-fork:0.1.47
+    build:
+      context: ../hfs
+      dockerfile: ../fhir-server-compare/hfs-docker/Dockerfile.fork
+    container_name: fhir-compare-hfs
+    depends_on:
+      - hfs-db
+      - hfs-es
+    ports:
+      - "8085:8080"
+    environment:
+      HFS_STORAGE_BACKEND: postgres-elasticsearch
+      HFS_DATABASE_URL: "postgresql://hfs:hfs@hfs-db:5432/hfs"
+      HFS_SERVER_HOST: "0.0.0.0"
+      HFS_SERVER_PORT: "8080"
+      HFS_DEFAULT_FHIR_VERSION: R4
+      HFS_LOG_LEVEL: info
+      HFS_ELASTICSEARCH_NODES: "http://hfs-es:9200"
+      HFS_ELASTICSEARCH_INDEX_PREFIX: hfs
+      # Tells HFS what external URL to publish in Bundle.link.self/next and
+      # Bundle.entry.fullUrl — without this, HFS publishes the internal URL
+      # (http://localhost:8080) which the loadtest loader (and any other
+      # client on the host) cannot reach because Docker maps the container's
+      # 8080 to host 8085. Downstream effect: `harvest_patient_ids` follows
+      # the `next` link, hits localhost:8080, gets "Connection refused" and
+      # the CRUD workload crashes immediately. Setting this to the
+      # externally-reachable URL fixes pagination + fullUrls.
+      HFS_BASE_URL: "http://localhost:8085"
+      # HFS's default max body is 10 MB (axum DefaultBodyLimit wrapping) and
+      # the request timeout is 30s. Both reject ~half of Synthea transaction
+      # bundles out of the gate (chronic patients hit 30-70 MiB; ingest
+      # latency at 1K patients can exceed 30s). Bumping to match the rest of
+      # the roster: 100 MiB body cap, 1500s timeout (same as loader.py:113).
+      HFS_MAX_BODY_SIZE: "104857600"
+      HFS_REQUEST_TIMEOUT: "1500"
+    restart: unless-stopped
+
+  hfs-db:
+    image: postgres@sha256:468e1f126ca5af849799cda06ac9b03d8090aae9fa5163408b3e8da44fad0702  # postgres:16 as of 2026-04-20
+    container_name: fhir-compare-hfs-db
+    environment:
+      POSTGRES_USER: hfs
+      POSTGRES_PASSWORD: hfs
+      POSTGRES_DB: hfs
+    volumes:
+      - hfs-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  hfs-es:
+    image: docker.elastic.co/elasticsearch/elasticsearch@sha256:01c1732062b4a846c5ca687b0094b89bad0bfed00c6d71626db32fb8f3131a78  # :8.15.3 as of 2026-04-20
+    container_name: fhir-compare-hfs-es
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms6g -Xmx6g"
+      bootstrap.memory_lock: "true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - hfs-es-data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+
+volumes:
+  aidbox-data:
+  medplum-data:
+  msfhir-data:
+  blaze-data:
+  spark-data:
+  hfs-data:
+  hfs-es-data:

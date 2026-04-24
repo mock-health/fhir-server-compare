@@ -1,0 +1,14 @@
+id: smart-on-fhir-v2
+label: SMART discovery surface
+version: "2.0.0-discovery"
+spec_url: https://hl7.org/fhir/smart-app-launch/STU2/
+status: active
+description: |
+  Tests the SMART App Launch v2 *discovery surface* — /.well-known/smart-configuration
+  shape, CapabilityStatement.rest.security declaration, scope/PKCE advertisement.
+  Does NOT test full SMART conformance (authorization code flow, real OAuth,
+  Backend Services JWT auth) — that ships in Round 1 with Inferno integration.
+buckets:
+  - MUST
+  - SHOULD
+  - MAY

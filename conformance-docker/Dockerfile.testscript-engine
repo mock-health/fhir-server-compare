@@ -1,0 +1,28 @@
+FROM ruby:3.2-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      git \
+      libxml2-dev \
+      libxslt-dev \
+      pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install AEGIS testscript-engine from source. The published rubygem (v0.0.1)
+# is stale; the GitHub main branch is the de-facto current version. We pin to a
+# commit at image-build time for round reproducibility — bump deliberately.
+ARG TESTSCRIPT_ENGINE_REF=main
+WORKDIR /opt
+RUN git clone https://github.com/fhir-crucible/testscript-engine.git \
+    && cd testscript-engine \
+    && git checkout "${TESTSCRIPT_ENGINE_REF}" \
+    && rm -f Gemfile.lock \
+    && bundle install
+
+WORKDIR /opt/testscript-engine
+
+# Mounted at runtime by docker-compose: TestScripts in, TestReports out.
+VOLUME ["/work/testscripts", "/work/testreports"]
+
+ENTRYPOINT ["bundle", "exec", "bin/testscript_engine"]
+CMD ["--help"]

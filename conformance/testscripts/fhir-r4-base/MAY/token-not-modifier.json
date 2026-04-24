@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-token-not-modifier",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-token-not-modifier",
+  "name": "FhirR4BaseTokenNotModifier",
+  "title": "FHIR R4 — token :not modifier supported on Patient.gender",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 search.html#token, the `:not` modifier on a token search inverts membership (e.g., gender NOT IN [male]). MAY-level support — useful but not foundational. Servers that reject the modifier force clients into ugly client-side filtering.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — token search modifiers (:not)",
+      "url": "https://hl7.org/fhir/R4/search.html#token"
+    }
+  ],
+  "test": [
+    {
+      "id": "may-token-not-modifier",
+      "name": "GET /Patient?gender:not=male returns 200 (server accepts :not)",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?gender:not=male&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

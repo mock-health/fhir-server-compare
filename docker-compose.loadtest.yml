@@ -1,0 +1,402 @@
+# docker-compose.loadtest.yml — overlay for the load-test variant of the stack.
+#
+# Adds four things the behavioral run doesn't need:
+#   1. HAPI backed by Postgres (the default H2 in-memory store will not survive
+#      17M resources — that was fine for the 1-patient behavioral run, not here).
+#   2. Equal CPU + memory caps on every server container so one server can't
+#      win by eating the whole host. We use `cpuset_cpus` (not just `cpus:`)
+#      to pin the active stack to physical cores 0-11, leaving physical cores
+#      12-15 dedicated to the load generator, OS, and docker daemon. Without
+#      pinning, the loader's 64 worker threads share SMT pairs with whichever
+#      server is under test — contaminating p99 latency with loader-side noise
+#      and silently penalizing fast servers (HAPI/Aidbox) that drive the loader
+#      harder.
+#   3. Stock Postgres tuned to FHIR-workload appropriate values for hapi-db AND
+#      medplum-db. Aidbox ships its own preconfigured `aidboxdb` image; without
+#      tuning the others, we'd be comparing a tuned database to a default one.
+#      This removes that vendor-asymmetry from the headline numbers.
+#   4. Images pinned to sha256 digests captured on 2026-04-17 so Stage 1 and
+#      Stage 3 measure the same software three days apart.
+#
+# Medplum horizontal scaling: Medplum's server is architecturally single-core
+# per process (plain express, no cluster). Their documented deployment topology
+# is N replicas behind a load balancer. To give Medplum the same 12-CPU budget
+# HAPI/Aidbox/MS FHIR get in a single container, we run 4 x medplum-server
+# replicas (2.5 CPU each) + nginx LB (2 CPU) — 12 CPU total — all sharing one
+# postgres + redis. Postgres isolation, statement_timeout, and preload libs
+# match the settings in medplum/medplum's docker-compose.full-stack.yml so we
+# run against Medplum's own recommended baseline (the loadtest perf tuning
+# layers on top without conflict).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.loadtest.yml up -d
+#
+# Host topology this is calibrated for: AMD Ryzen 9 9950X — 16 physical cores,
+# 32 SMT threads, 186 GiB RAM, 4 TB NVMe. SMT layout: physical core N maps to
+# logical CPUs N and N+16. So pinning to "0-11,16-27" reserves physical cores
+# 0-11 (24 logical CPUs) for the server stack, leaving physical cores 12-15
+# (logical 12-15, 28-31) free for the loader process and the docker stats
+# sampler. Memory caps are loose because the host has plenty: per-server 128
+# GiB + 32 GiB DB = 160 GiB used by the active pair, well under 186 GiB host.
+
+# Shared replica definition. Each medplum-N pairs this with a unique
+# container_name below. Keeping the shared block in one place so bumping the
+# image digest, resource caps, or healthcheck only has to be edited once.
+x-medplum-server: &medplum_server
+  image: medplum/medplum-server@sha256:7a5f37157a1b16f983402bae9bfbcdc858431464b4f5c0cc33b23d22629d546b
+  depends_on:
+    medplum-db:
+      condition: service_healthy
+    medplum-redis:
+      condition: service_healthy
+  volumes:
+    - ./medplum.config.json:/usr/src/medplum/medplum.config.json:ro
+  cpus: 2.5
+  mem_limit: 28g
+  cpuset: "0-11,16-27"
+  restart: unless-stopped
+  # First-to-start replica grabs the postgres advisory lock and runs
+  # migrations; the other three wait. start_period gives that replica 60s
+  # to finish before healthcheck failures start counting against retries.
+  healthcheck:
+    test:
+      - "CMD"
+      - "node"
+      - "-e"
+      - "fetch('http://localhost:8103/healthcheck').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+    interval: 10s
+    timeout: 5s
+    retries: 20
+    start_period: 60s
+
+services:
+
+  # --- HAPI --------------------------------------------------------------
+  hapi:
+    image: hapiproject/hapi@sha256:34c86fd5805df77c2b9d9c10538050b16ac3dc244352da0ebe4717f931330775
+    depends_on:
+      - hapi-db
+    environment:
+      # JPA Postgres wire-up. Env vars are dotted Spring Boot keys — HAPI's
+      # entrypoint translates them into application.yaml overrides.
+      spring.datasource.url: "jdbc:postgresql://hapi-db:5432/hapi"
+      spring.datasource.username: hapi
+      spring.datasource.password: hapi
+      spring.datasource.driverClassName: org.postgresql.Driver
+      spring.jpa.properties.hibernate.dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres94Dialect
+      hapi.fhir.fhir_version: R4
+    cpus: 12.0
+    mem_limit: 128g
+    cpuset: "0-11,16-27"
+
+  hapi-db:
+    image: postgres@sha256:468e1f126ca5af849799cda06ac9b03d8090aae9fa5163408b3e8da44fad0702
+    container_name: fhir-compare-hapi-db
+    environment:
+      POSTGRES_USER: hapi
+      POSTGRES_PASSWORD: hapi
+      POSTGRES_DB: hapi
+    # Tuning rationale: NVMe-backed, 32 GiB cap on this container, OLTP-mix
+    # with bursty bulk-insert (Synthea bundle ingest) plus point-read workload
+    # (CRUD R verb). Values mirror standard pg_tune output for an OLTP server
+    # with a generous RAM budget. Without these, stock postgres uses
+    # shared_buffers=128MB which murders performance at 100K patients.
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=8GB"
+      - "-c"
+      - "effective_cache_size=24GB"
+      - "-c"
+      - "work_mem=64MB"
+      - "-c"
+      - "maintenance_work_mem=2GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=8"
+      - "-c"
+      - "max_parallel_workers_per_gather=4"
+      - "-c"
+      - "max_parallel_workers=8"
+      - "-c"
+      - "wal_compression=on"
+    volumes:
+      - hapi-data:/var/lib/postgresql/data
+    cpus: 6.0
+    mem_limit: 32g
+    cpuset: "0-11,16-27"
+    restart: unless-stopped
+
+  # --- Aidbox ------------------------------------------------------------
+  aidbox:
+    image: healthsamurai/aidboxone@sha256:8af7d51a00832a853ffd25255fb9c569de1a4ee62aef877afe20847e873b5fa4
+    environment:
+      # Default Aidbox rejects POST bodies > 20 MiB (20971520 bytes exactly —
+      # matches the "max request body 20971520" error in the raw logs).
+      # The actual env var is BOX_WEB_MAX_BODY. Not BOX_WEBSERVER_MAX_POST_SIZE.
+      # Not BOX_WEBSERVER_MAX_REQUEST_BODY. Just BOX_WEB_MAX_BODY. Bumped to
+      # 100 MiB so Synthea's 70 MiB chronic-patient bundles land.
+      BOX_WEB_MAX_BODY: "104857600"
+    cpus: 12.0
+    mem_limit: 128g
+    cpuset: "0-11,16-27"
+
+  aidbox-db:
+    image: healthsamurai/aidboxdb@sha256:e59d1afa672dec0288ee1d5005599c61eac06f4ce9558a5cba02042ecacdedf7
+    cpus: 6.0
+    mem_limit: 32g
+    cpuset: "0-11,16-27"
+
+  # --- Medplum -----------------------------------------------------------
+  # Four server replicas behind nginx (see x-medplum-server anchor above).
+  # Combined: 4 × 2.5 CPU (replicas) + 2 CPU (nginx) = 12 CPU, matching the
+  # single-container allocation that HAPI/Aidbox/MS FHIR get.
+  medplum-1:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-1
+  medplum-2:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-2
+  medplum-3:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-3
+  medplum-4:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-4
+
+  medplum-lb:
+    image: nginx:1.27-alpine
+    container_name: fhir-compare-medplum-lb
+    depends_on:
+      medplum-1:
+        condition: service_healthy
+      medplum-2:
+        condition: service_healthy
+      medplum-3:
+        condition: service_healthy
+      medplum-4:
+        condition: service_healthy
+    ports:
+      - "8103:8103"
+    volumes:
+      - ./medplum-lb.conf:/etc/nginx/nginx.conf:ro
+    cpus: 2.0
+    mem_limit: 1g
+    cpuset: "0-11,16-27"
+    restart: unless-stopped
+
+  medplum-db:
+    image: postgres@sha256:468e1f126ca5af849799cda06ac9b03d8090aae9fa5163408b3e8da44fad0702
+    # Same OLTP tuning as hapi-db — both use stock postgres, both need to be
+    # equivalent so a vendor critic can't say "you tuned theirs and not ours."
+    #
+    # PLUS the three settings Medplum's own docker-compose.full-stack.yml sets
+    # on its postgres: REPEATABLE READ isolation (their server has retry logic
+    # around serialization failures that expects this), statement_timeout (60s
+    # is their documented ceiling), and pg_stat_statements+auto_explain
+    # preload (so their server's query-plan analysis surfaces work).
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=8GB"
+      - "-c"
+      - "effective_cache_size=24GB"
+      - "-c"
+      - "work_mem=64MB"
+      - "-c"
+      - "maintenance_work_mem=2GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=8"
+      - "-c"
+      - "max_parallel_workers_per_gather=4"
+      - "-c"
+      - "max_parallel_workers=8"
+      - "-c"
+      - "wal_compression=on"
+      - "-c"
+      - "default_transaction_isolation=REPEATABLE READ"
+      - "-c"
+      - "statement_timeout=60000"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements,auto_explain"
+    cpus: 6.0
+    mem_limit: 32g
+    cpuset: "0-11,16-27"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medplum"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  medplum-redis:
+    image: redis@sha256:24ea35ee039d7345bef2377611e3b1a615231746de4cfea74c1414575ee56167
+    # --requirepass matches Medplum's full-stack default so we're running
+    # against their documented environment. --save "" disables RDB snapshots:
+    # Medplum's redis holds BullMQ job state + cache only, nothing durable
+    # that isn't also in postgres, and we saw 200 MB/s of periodic snapshot
+    # bursts during ingest that translated directly into iowait.
+    command:
+      - "redis-server"
+      - "--requirepass"
+      - "medplum"
+      - "--save"
+      - ""
+    cpus: 1.0
+    mem_limit: 4g
+    cpuset: "0-11,16-27"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "medplum", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  medplum-app:
+    image: medplum/medplum-app@sha256:7f558f36226fd7acd2e881abd1b726e0cb12a57881c0c32befd204824c195f64
+    # UI only — kept off the benchmark budget. Low caps so an idle UI cannot
+    # take resources from the server under test. Not started by ramp.py.
+    cpus: 1.0
+    mem_limit: 2g
+
+  # --- Microsoft FHIR Server --------------------------------------------
+  msfhir:
+    image: mcr.microsoft.com/healthcareapis/r4-fhir-server@sha256:945dd040e868f43de292fe6878ddb44be853042a51b747cc6b021e7c8edb9e34
+    environment:
+      # Synthea's oldest patients produce transaction bundles with 20-30K
+      # entries and up to 35MB JSON. Three MS FHIR defaults reject them:
+      #   - Bundle__EntryLimit (500) — entries per bundle
+      #   - Kestrel max body (30MB) — HTTP request body size
+      #   - Http JsonOptions (default) — parser stack depth
+      # Bumped generously for the load test. At-default rejection rate is
+      # itself a finding: ~30% of 1000-patient Synthea output is unshippable
+      # to an MS FHIR server without config changes.
+      FhirServer__Bundle__EntryLimit: "30000"
+      Kestrel__Limits__MaxRequestBodySize: "104857600"
+    cpus: 12.0
+    mem_limit: 128g
+    cpuset: "0-11,16-27"
+
+  msfhir-db:
+    image: mcr.microsoft.com/mssql/server@sha256:2dca9ee5cd5316952d9b6ef4a0c088ac95b55e3502accdda0fc12ad6ede7b905
+    cpus: 6.0
+    mem_limit: 32g
+    cpuset: "0-11,16-27"
+
+  # --- Blaze (Round 1) ---------------------------------------------------
+  # Single-process server, RocksDB embedded — no DB sidecar to budget for.
+  # Combined budget = full server allocation: 12 CPU + 128 GiB cap. Heap
+  # bumped to 96g to leave room for RocksDB block cache off-heap; if 100K+
+  # runs hit OOM, lower -Xmx to give RocksDB more page-cache headroom.
+  blaze:
+    image: samply/blaze:latest
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx96g"
+      BASE_URL: "http://localhost:8082"
+      LOG_LEVEL: "info"
+    cpus: 12.0
+    mem_limit: 128g
+    cpuset: "0-11,16-27"
+
+  # --- Spark (Round 1) ---------------------------------------------------
+  # MongoDB-backed. Same 12+6 split as HAPI/Aidbox — server takes 12 CPU
+  # / 128 GiB; mongo gets 6 CPU / 32 GiB to match the other DB tiers.
+  #
+  # Kestrel 30 MB body-size cap is load-bearing context but unconfigurable
+  # on this image. Synthea chronic patients can produce bundles up to ~70
+  # MiB, rejected with BadHttpRequestException. Verified 2026-04-19 that
+  # NEITHER the standard `Kestrel__Limits__MaxRequestBodySize` env var
+  # (which works on msfhir) NOR a bind-mounted `/app/appsettings.json`
+  # override flows through — both are silently ignored. Spark's Program.cs
+  # evidently hardcodes Kestrel options after config binding. Short of
+  # forking sparkfhir/spark, the 30 MB cap is fixed. At 1K-patient Synthea
+  # scale this rejects ~2-3% of bundles; document as a published ceiling.
+  spark:
+    image: sparkfhir/spark:r4-latest
+    cpus: 12.0
+    mem_limit: 128g
+    cpuset: "0-11,16-27"
+
+  spark-db:
+    image: sparkfhir/mongo:r4-latest
+    # Mongo's storage engine (WiredTiger) auto-sizes its cache to half of
+    # (RAM - 1GiB), which on a 32GiB container = ~15.5GiB cache. Reasonable
+    # default for FHIR-shape document workloads. No --setParameter tuning
+    # added here; if 100K runs surface mongo as the bottleneck, revisit
+    # cacheSizeGB and storage compaction settings.
+    cpus: 6.0
+    mem_limit: 32g
+    cpuset: "0-11,16-27"
+
+  # --- HFS (Round 2 spike) -----------------------------------------------
+  # Helios FHIR Server, Rust, Postgres + Elasticsearch split-backend (the
+  # vendor's documented production path). Stack budget 8 + 4 + 4 = 16 CPU
+  # (vs 18 for HAPI/Aidbox single-backend) — the ES tier replaces part of
+  # the "server does its own search indexing" work that Postgres-only
+  # servers keep in-process. Memory: server 64 GiB + pg 16 GiB + es 32 GiB
+  # (6 GiB heap + off-heap page cache) = 112 GiB, fits the same cpuset.
+  hfs:
+    image: fhir-compare-hfs-fork:0.1.47
+    build:
+      context: ../hfs
+      dockerfile: ../fhir-server-compare/hfs-docker/Dockerfile.fork
+    cpus: 8.0
+    mem_limit: 64g
+    cpuset: "0-11,16-27"
+
+  hfs-db:
+    image: postgres:16
+    # Same OLTP tuning as hapi-db / medplum-db — all three use stock postgres,
+    # so they must match to remove the "you tuned theirs and not ours" vendor
+    # asymmetry from headline numbers.
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=4GB"
+      - "-c"
+      - "effective_cache_size=12GB"
+      - "-c"
+      - "work_mem=64MB"
+      - "-c"
+      - "maintenance_work_mem=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=8"
+      - "-c"
+      - "max_parallel_workers_per_gather=4"
+      - "-c"
+      - "max_parallel_workers=8"
+      - "-c"
+      - "wal_compression=on"
+    cpus: 4.0
+    mem_limit: 16g
+    cpuset: "0-11,16-27"
+
+  hfs-es:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    cpus: 4.0
+    mem_limit: 32g
+    cpuset: "0-11,16-27"
+
+volumes:
+  hapi-data:

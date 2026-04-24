@@ -1,0 +1,19 @@
+id: crud
+label: CRUD
+version: v1
+spec_url: /performance/methodology#crud
+status: active
+description: |
+  Create / Read / Update / Delete op mix against a population that already
+  exists (post-ingest at each checkpoint). 64 concurrent workers drive the
+  mix at steady-state for a fixed time budget. Headline metric is the
+  overall p50 (median) latency across all verbs — what a typical request
+  feels like. p95/p99 ride along as tail evidence in each evidence row,
+  but aren't the headline: a 2-minute window doesn't produce enough
+  samples on slow cells to make p99 stable. Per-verb breakdowns live in
+  the raw JSONL.
+
+  Warmup: 30 s of untimed ops before the measurement window begins, to let
+  JVMs JIT and caches warm.
+buckets:
+  - MAY

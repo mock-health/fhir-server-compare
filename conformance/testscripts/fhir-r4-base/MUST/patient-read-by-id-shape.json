@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-patient-read-by-id-shape",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-patient-read-by-id-shape",
+  "name": "FhirR4BasePatientReadByIdShape",
+  "title": "FHIR R4 — read on a non-existent Patient id returns 404 (not 200, not 500)",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 §3.1 read interaction (http.html#read), a read against a logical id that doesn't exist SHALL return 404 Not Found with an OperationOutcome. Servers that return 200 with a stale/empty resource, or 500 with a stack trace, surface broken error semantics that downstream clients have to special-case.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 §3.1 — read interaction",
+      "url": "https://hl7.org/fhir/R4/http.html#read"
+    }
+  ],
+  "test": [
+    {
+      "id": "must-read-404-on-missing-id",
+      "name": "GET /Patient/this-id-cannot-exist returns 404",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "read"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "/this-id-cannot-exist-conformance-test-9f3e2a"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 404",
+            "operator": "equals",
+            "responseCode": "404"
+          }
+        }
+      ]
+    }
+  ]
+}

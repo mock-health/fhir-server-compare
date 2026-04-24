@@ -1,0 +1,41 @@
+{
+  "resourceType": "TestScript",
+  "id": "bulk-data-v2-capability-declares-export",
+  "url": "https://mock.health/conformance/testscripts/bulk-data-v2-capability-declares-export",
+  "name": "BulkDataV2CapabilityDeclaresExport",
+  "title": "Bulk Data v2 — CapabilityStatement declares an export operation",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per Bulk Data Access IG v2, servers SHOULD declare export operations in their CapabilityStatement so clients can discover Bulk Data support without trial-and-error. FHIR CapabilityStatement declares operations as `operation.name` (without the `$` prefix) with a canonical `operation.definition` URL. This test matches either the canonical Bulk Data OperationDefinition URL (http://hl7.org/fhir/uv/bulkdata/OperationDefinition/...) OR an operation entry named export/patient-export/group-export.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "Bulk Data v2 — server capability documentation",
+      "url": "https://hl7.org/fhir/uv/bulkdata/STU2/export.html#server-capability-documentation"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-declare-export",
+      "name": "CapabilityStatement declares an export operation",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "capabilities"
+            }
+          }
+        },
+        {
+          "assert": {
+            "label": "responseBody declares an export OperationDefinition or operation.name",
+            "operator": "matchesRegex",
+            "responseBody": "(hl7\\.org/fhir/uv/bulkdata/OperationDefinition|\"name\"\\s*:\\s*\"(patient-export|group-export|export)\")"
+          }
+        }
+      ]
+    }
+  ]
+}

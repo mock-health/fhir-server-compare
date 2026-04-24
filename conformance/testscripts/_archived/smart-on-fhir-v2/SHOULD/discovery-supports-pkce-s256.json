@@ -1,0 +1,39 @@
+{
+  "resourceType": "TestScript",
+  "id": "smart-on-fhir-v2-discovery-supports-pkce-s256",
+  "url": "https://mock.health/conformance/testscripts/smart-on-fhir-v2-discovery-supports-pkce-s256",
+  "name": "SmartOnFhirV2DiscoverySupportsPkceS256",
+  "title": "SMART on FHIR v2 — discovery document advertises PKCE S256",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per SMART App Launch IG v2 §5.2 and OAuth 2.1 best practice, public clients SHOULD use PKCE with the S256 challenge method. The discovery document advertises supported methods via code_challenge_methods_supported. Servers omitting S256 force less secure flows (or no PKCE at all).",
+  "test": [
+    {
+      "id": "should-discovery-pkce-s256",
+      "name": "Discovery document mentions S256 (PKCE method)",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "encodeRequestUrl": false,
+            "params": "/.well-known/smart-configuration",
+            "requestHeader": [
+              { "field": "Accept", "value": "application/json" }
+            ]
+          }
+        },
+        {
+          "assert": {
+            "label": "responseBody contains S256",
+            "operator": "contains",
+            "responseBody": "S256"
+          }
+        }
+      ]
+    }
+  ]
+}

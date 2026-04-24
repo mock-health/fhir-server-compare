@@ -1,0 +1,48 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-capability-statement",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-capability-statement",
+  "name": "FhirR4BaseCapabilityStatement",
+  "title": "FHIR R4 — /metadata returns a CapabilityStatement",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Every FHIR server MUST expose its capabilities at the well-known /metadata endpoint. The response is a CapabilityStatement Resource (FHIR R4 capabilitystatement.html). This is the most basic FHIR conformance check — without it, no client can discover what the server supports.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — CapabilityStatement resource",
+      "url": "https://hl7.org/fhir/R4/capabilitystatement.html"
+    }
+  ],
+  "test": [
+    {
+      "id": "must-expose-metadata",
+      "name": "Server returns 200 on GET /metadata",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "capabilities"
+            }
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        },
+        {
+          "assert": {
+            "label": "contentType is fhir+json",
+            "operator": "contains",
+            "contentType": "fhir+json"
+          }
+        }
+      ]
+    }
+  ]
+}

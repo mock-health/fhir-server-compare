@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-composite-component-code-value",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-composite-component-code-value",
+  "name": "FhirR4BaseCompositeComponentCodeValue",
+  "title": "FHIR R4 — composite parameter component-code-value-quantity returns non-5xx",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 search.html#composite, composite parameters chain a code+value pair atomically (matches must occur in the SAME repetition). `component-code-value-quantity` on Observation is the canonical example: 'systolic BP component AND value > 140' must be the same component, not different ones. MAY-level — many servers don't implement composites. 5xx indicates a parser crash on the `$` separator.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — composite search parameters",
+      "url": "https://hl7.org/fhir/R4/search.html#composite"
+    }
+  ],
+  "test": [
+    {
+      "id": "may-composite-parameter",
+      "name": "GET /Observation?component-code-value-quantity=http://loinc.org|8480-6$gt140 returns non-5xx",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Observation",
+            "encodeRequestUrl": false,
+            "params": "?component-code-value-quantity=http://loinc.org|8480-6$gt140&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is not 5xx",
+            "operator": "notIn",
+            "responseCode": "500,501,502,503,504"
+          }
+        }
+      ]
+    }
+  ]
+}

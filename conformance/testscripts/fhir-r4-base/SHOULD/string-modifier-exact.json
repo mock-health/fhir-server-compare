@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-string-modifier-exact",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-string-modifier-exact",
+  "name": "FhirR4BaseStringModifierExact",
+  "title": "FHIR R4 — string :exact modifier supported on Patient.name",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 search.html#string, the `:exact` modifier disables the default startsWith behavior and requires a case-sensitive exact match. Servers SHOULD support this for queries that must NOT loose-match (e.g., precise duplicate-detection workflows).",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — string search modifiers (:exact)",
+      "url": "https://hl7.org/fhir/R4/search.html#string"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-string-exact-modifier",
+      "name": "GET /Patient?name:exact=Smith returns 200 (server accepts :exact)",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?name:exact=Smith&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

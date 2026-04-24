@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-observation-by-code",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-observation-by-code",
+  "name": "FhirR4BaseObservationByCode",
+  "title": "FHIR R4 — Observation `code` parameter accepts token",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "The base FHIR R4 SearchParameter Observation-code (token, system|code) is universally honored. This test confirms the search succeeds. Note: per spec, `code` matches Observation.code only, NOT Observation.component.code — the latter requires combo-code. We only assert the request succeeds; the value-level component-vs-toplevel divergence is captured by the combo-code test.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — Observation search parameters",
+      "url": "https://hl7.org/fhir/R4/observation.html#search"
+    }
+  ],
+  "test": [
+    {
+      "id": "should-accept-code-token",
+      "name": "Observation?code=loinc|... returns 200",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Observation",
+            "encodeRequestUrl": false,
+            "params": "?code=http://loinc.org|8480-6&_count=1&_total=accurate"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

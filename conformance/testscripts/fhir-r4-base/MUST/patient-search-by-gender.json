@@ -1,0 +1,51 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-patient-search-by-gender",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-patient-search-by-gender",
+  "name": "FhirR4BasePatientSearchByGender",
+  "title": "FHIR R4 — Patient search supports the gender (token) parameter",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per FHIR R4 Patient resource (patient.html#search), `gender` is a defined token search parameter. Servers MUST support it as part of base-spec compliance. The token search type is one of the most heavily used in real workloads.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — Patient.gender search parameter",
+      "url": "https://hl7.org/fhir/R4/patient.html#search"
+    }
+  ],
+  "test": [
+    {
+      "id": "must-search-by-gender-token",
+      "name": "GET /Patient?gender=female returns 200 + Bundle",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "Patient",
+            "encodeRequestUrl": false,
+            "params": "?gender=female&_count=1"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseBody is a Bundle",
+            "operator": "matchesRegex",
+            "responseBody": "\"resourceType\"\\s*:\\s*\"Bundle\""
+          }
+        }
+      ]
+    }
+  ]
+}

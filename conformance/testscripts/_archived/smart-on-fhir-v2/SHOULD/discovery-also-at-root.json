@@ -1,0 +1,40 @@
+{
+  "resourceType": "TestScript",
+  "id": "smart-on-fhir-v2-discovery-also-at-root",
+  "url": "https://mock.health/conformance/testscripts/smart-on-fhir-v2-discovery-also-at-root",
+  "name": "SmartOnFhirV2DiscoveryAlsoAtRoot",
+  "title": "SMART on FHIR v2 — discovery is ALSO discoverable at server root (informational)",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "Per SMART App Launch IG v2 §5.1, the canonical location for the SMART configuration document is `<fhir-base>/.well-known/smart-configuration` (covered by the MUST tests). Some implementations ALSO host it at the server origin (`<server-root>/.well-known/smart-configuration`) since OAuth metadata is sometimes managed at the issuer URL rather than the resource server. This test reports whether root-hosting is available — a SHOULD-level convenience for clients that probe both locations. NOT a fallback for the canonical MUST test: a server hosting only at root is non-conformant with the IG.",
+  "test": [
+    {
+      "id": "should-discovery-also-at-root",
+      "name": "GET <server-root>/.well-known/smart-configuration returns 200",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "encodeRequestUrl": false,
+            "params": "/.well-known/smart-configuration",
+            "pathFromRoot": true,
+            "requestHeader": [
+              { "field": "Accept", "value": "application/json" }
+            ]
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode is 200",
+            "operator": "equals",
+            "responseCode": "200"
+          }
+        }
+      ]
+    }
+  ]
+}

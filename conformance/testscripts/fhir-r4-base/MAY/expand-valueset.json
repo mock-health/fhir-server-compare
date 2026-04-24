@@ -1,0 +1,44 @@
+{
+  "resourceType": "TestScript",
+  "id": "fhir-r4-base-expand-valueset",
+  "url": "https://mock.health/conformance/testscripts/fhir-r4-base-expand-valueset",
+  "name": "FhirR4BaseExpandValueSet",
+  "title": "FHIR R4 — ValueSet/$expand operation present",
+  "status": "active",
+  "date": "2026-04-19",
+  "publisher": "mock.health",
+  "description": "ValueSet/$expand is an OPTIONAL terminology operation. A server that implements it returns a 2xx (with the expanded ValueSet) or a 4xx (with OperationOutcome explaining why — e.g. ValueSet not loaded). A server that doesn't implement it returns 4xx with a 'not implemented' error. The MAY-pass criterion is 'NOT 5xx' — i.e. the operation is at least routable to a clean error.",
+  "relatedArtifact": [
+    {
+      "type": "documentation",
+      "label": "FHIR R4 — ValueSet/$expand operation",
+      "url": "https://hl7.org/fhir/R4/valueset-operation-expand.html"
+    }
+  ],
+  "test": [
+    {
+      "id": "may-route-expand",
+      "name": "ValueSet/$expand returns clean 2xx or 4xx (no 5xx)",
+      "action": [
+        {
+          "operation": {
+            "type": {
+              "system": "http://terminology.hl7.org/CodeSystem/testscript-operation-codes",
+              "code": "search"
+            },
+            "resource": "ValueSet",
+            "encodeRequestUrl": false,
+            "params": "/$expand?url=http://hl7.org/fhir/us/core/ValueSet/us-core-condition-code&count=5"
+          }
+        },
+        {
+          "assert": {
+            "label": "responseCode not in 5xx range",
+            "operator": "notIn",
+            "responseCode": "500,501,502,503,504,505"
+          }
+        }
+      ]
+    }
+  ]
+}
