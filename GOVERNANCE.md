@@ -14,7 +14,7 @@ Any FHIR R4 server can appear in the matrix if it meets all three criteria:
 2. **Implements CapabilityStatement + CRUD + Search.** These are the minimum surfaces the harness exercises. Servers that only do a subset (e.g., read-only FHIR facades) get a methodology asterisk and restricted workloads.
 3. **Has a maintainer who will engage on a 2-week pre-notification window per round.** Before publication, each vendor gets a private preview of their results and can submit configuration PRs. Silent vendors still get tested, but a comment on the leaderboard notes "no vendor response."
 
-Submitters should open a GitHub issue with the server's Dockerfile, FHIR base URL, and auth shape. Once the inclusion criteria are confirmed, the addition is a PR against `servers.yaml`, `docker-compose.yml`, `queries.yaml`, and `loadtest/conformance/run.py` (see `CONTRIBUTING.md`).
+Submitters should open a GitHub issue with the server's Dockerfile, FHIR base URL, and auth shape. Once the inclusion criteria are confirmed, the addition is a PR against `config/servers.yaml`, `docker-compose.yml`, `config/queries.yaml`, and `src/fhirbench/conformance/run.py` (see `CONTRIBUTING.md`).
 
 ## Methodology changes
 

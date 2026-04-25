@@ -6,10 +6,10 @@ Thanks for considering a contribution. This repo is a FHIR server comparison har
 
 A new server is an append-only change across four files:
 
-1. **`servers.yaml`** — append a new block with `id`, `label`, `base_url`, `version`, `image`, `source_url`, and an `auth` shape (`none`, `basic`, `client_credentials`, or a new type if your server needs one).
+1. **`config/servers.yaml`** — append a new block with `id`, `label`, `base_url`, `version`, `image`, `source_url`, and an `auth` shape (`none`, `basic`, `client_credentials`, or a new type if your server needs one).
 2. **`docker-compose.yml`** — add a service for the server (and any sidecars like a database). Pin the image by sha256 digest — see the header comment for the refresh command.
-3. **`queries.yaml`** — add an `expected_<id>` key to every query in the file. Run `python compare.py` to observe real behavior and fill these in.
-4. **`loadtest/conformance/run.py`** — append your server id to `ROSTER`.
+3. **`config/queries.yaml`** — add an `expected_<id>` key to every query in the file. Run `python -m fhirbench.compare` to observe real behavior and fill these in.
+4. **`src/fhirbench/conformance/run.py`** — append your server id to `ROSTER`.
 
 ### Inclusion criteria
 
