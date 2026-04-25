@@ -22,7 +22,7 @@ BENCH_RUN_ID ?= ramp-50k
 STUDIO_DIR   ?= ../fhir-studio
 
 # Ramp roster and workload shape. Override on the command line to taste.
-SERVERS           ?= hapi blaze aidbox medplum msfhir spark hfs
+SERVERS           ?= hapi blaze aidbox medplum msfhir spark
 WORKERS_INGEST    ?= 32
 WORKERS_WORKLOAD  ?= 64
 WORKLOAD_DURATION ?= 900
@@ -60,7 +60,7 @@ help:
 	@echo "  make k6-ramp                            K6-ONLY ramp (no Python workloads). 1K patients,"
 	@echo "                                          all servers. Ingests via loadtest.loader."
 	@echo "  make k6-ramp-50k                        K6-ONLY full ramp: 1K/4K/16K/64K checkpoints,"
-	@echo "                                          6 servers (HFS excluded). ~12-16h."
+	@echo "                                          all 6 servers. ~12-16h."
 	@echo ""
 	@echo "Conformance (TestScript-based):"
 	@echo "  make conformance-run       Execute all TestScripts against every server."
@@ -189,7 +189,7 @@ k6-compare:
 # ---------------------------------------------------------------------------
 
 # Override defaults at the CLI: `make shadow-1k SHADOW_N=1000 SHADOW_DURATION=120 …`.
-SHADOW_SERVERS  ?= hapi aidbox medplum msfhir blaze spark hfs
+SHADOW_SERVERS  ?= hapi aidbox medplum msfhir blaze spark
 SHADOW_N        ?= 1000
 SHADOW_DURATION ?= 120
 # Shadow runs reserve round ids 2026-q2-r900 (Python) and 2026-q2-r901 (k6)
@@ -256,9 +256,8 @@ k6-ramp:
 	@echo ""
 	@echo "K6 round ready: results/rounds/$(K6_RAMP_ROUND)/benchmark.json"
 
-## Full-ladder k6-only ramp: 1K/4K/16K/64K checkpoints × 6 servers (HFS
-## excluded — Round-2 spike, separate methodology). Publishes to a
-## distinct round id so it sits alongside earlier Python-harness rounds
+## Full-ladder k6-only ramp: 1K/4K/16K/64K checkpoints × all 6 servers.
+## Publishes to a distinct round id so it sits alongside earlier Python-harness rounds
 ## in results/rounds/ rather than overwriting. Default WORKLOAD_DURATION
 ## (900s = 15min per workload per cell) is inherited from the top; total
 ## ramp wall-clock lands in the ~12-16h bracket like loadtest-ramp-50k.

@@ -93,14 +93,11 @@ def harvest_patient_ids(
     """
     ids: list[str] = []
     url: str | None = f"{base_url}/Patient?_count=200&_elements=id"
-    # HFS ships with a pagination bug that joins its cursor with `?_cursor=`
-    # after an existing query string, so urljoin URL-encodes the rogue `?`
-    # as `%3F`, the cursor becomes part of `_elements`, the server fails to
-    # parse it, and the next page's `next` URL carries BOTH cursors
-    # concatenated — URL grows ~167 chars per page and eventually busts
-    # httpx's 65 KB hard limit. Defensive cap: bail as soon as next-url
-    # exceeds 8 KB, which is well below any real server's practical limit
-    # and still leaves 200-400 harvested ids for the CRUD workload to run on.
+    # Defensive cap on next-page URL length. Some servers ship pagination
+    # bugs that concatenate cursors across pages — the URL grows on every
+    # request and eventually busts httpx's 65 KB hard limit. Bailing at
+    # 8 KB is well below any real server's practical pagination URL and
+    # still leaves 200-400 harvested ids for the CRUD workload to run on.
     MAX_NEXT_URL = 8192
     # Harvest runs right after the search phase, which can leave the server
     # under heavy load; the first page against Aidbox @64K has been observed

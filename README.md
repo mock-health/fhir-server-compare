@@ -12,7 +12,6 @@ Load one Synthea patient into seven open-source FHIR servers, run the same queri
 | Microsoft FHIR Server | 4.0.728 | MIT | `mcr.microsoft.com/healthcareapis/r4-fhir-server` + SQL Server |
 | Blaze | 1.6.2 | Apache-2.0 | `samply/blaze` |
 | Spark | 2.4.1-r4 | BSD-3 | `sparkfhir/spark` + MongoDB |
-| HFS (Helios) | 0.1.47+pr68 | MIT | built from `hfs-docker/Dockerfile.fork` |
 
 Images are pinned by sha256 digest in `docker-compose.yml` so the stack is byte-for-byte reproducible across machines and time.
 
@@ -31,7 +30,6 @@ python load_bundle.py --server medplum
 python load_bundle.py --server msfhir
 python load_bundle.py --server blaze
 python load_bundle.py --server spark
-python load_bundle.py --server hfs
 python compare.py
 ```
 

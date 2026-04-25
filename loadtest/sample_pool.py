@@ -31,7 +31,7 @@ from _fhir_servers import AuthedSession  # noqa: E402
 
 MAX_PER_POOL = 500
 PAGINATE_COUNT = 200
-MAX_NEXT_URL = 8192  # Same defensive cap as harvest_patient_ids (HFS quirk).
+MAX_NEXT_URL = 8192  # Same defensive cap as harvest_patient_ids (pagination URL growth).
 PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 
 

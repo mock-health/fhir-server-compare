@@ -18,7 +18,7 @@ buckets:
 #
 # A server's bulk-data-v2 cell becomes N/A (not applicable) when the *entire
 # profile surface* is unreachable — either the route isn't wired (Blaze,
-# Spark, HFS all 404/400 the kickoff) or a mandatory infra dependency isn't
+# Spark both 404/400 the kickoff) or a mandatory infra dependency isn't
 # configured in the vendor's default dev tier (Aidbox needs a cloud storage
 # backend). N/A means "we cannot measure this server on this profile at all,"
 # and the na_reason string explains why.

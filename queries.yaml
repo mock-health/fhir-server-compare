@@ -76,7 +76,6 @@
 #   expected_msfhir:  what Microsoft FHIR Server returns (free text; "?" = not yet observed)
 #   expected_blaze:   what Blaze returns (free text; "?" = not yet observed)
 #   expected_spark:   what Spark returns (free text; "?" = not yet observed)
-#   expected_hfs:     what HFS returns (free text; "?" = not yet observed)
 #
 # Historical note: earlier iterations compared against GCP Healthcare API. GCP
 # is no longer in-scope (this repo is OSS-only and locally-reproducible), so

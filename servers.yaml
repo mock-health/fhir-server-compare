@@ -80,27 +80,6 @@ servers:
     auth:
       type: none
 
-  - id: hfs
-    label: HFS
-    # Helios FHIR Server — MIT-licensed, Rust-based, Postgres+Elasticsearch
-    # split-backend production path. Round 2 spike: Postgres-only for the
-    # first 1K to isolate the storage-engine comparison; Elastic added later
-    # for the full split-backend story. Internal port 8080 → host 8085.
-    # CapabilityStatement is at root /metadata (same pattern as MS FHIR),
-    # so the FHIR base URL has no path suffix.
-    base_url: ${HFS_BASE_URL:-http://localhost:8085}
-    # HFS 0.1.47 + the body-limit fix (HeliosSoftware/hfs#68, merged upstream).
-    # We still build locally from ../hfs via hfs-docker/Dockerfile.fork for
-    # reproducibility of the exact binary used in this round; once upstream
-    # ships a release containing #68 we can swap to the registry image and
-    # drop the dockerfile_url. `source_url` points at upstream.
-    version: "0.1.47+pr68"
-    image: fhir-compare-hfs-fork:0.1.47
-    source_url: https://github.com/HeliosSoftware/hfs
-    dockerfile_url: https://github.com/mock-health/fhir-server-compare/blob/main/hfs-docker/Dockerfile.fork
-    auth:
-      type: none
-
   - id: spark
     label: Spark
     # BSD-3, MongoDB-backed, maintained by Incendi (originally a Firely

@@ -11,7 +11,7 @@
 #   - auth-proxy-medplum       : injects OAuth2 Bearer token for Medplum
 #                                (refreshes before expiry)
 #
-# Anonymous servers (HAPI, MS FHIR, Blaze, Spark, HFS) are reached directly
+# Anonymous servers (HAPI, MS FHIR, Blaze, Spark) are reached directly
 # by service name on the shared docker network — no proxy needed.
 #
 # Aidbox note: the `aidbox.app/runme` reference config Health Samurai

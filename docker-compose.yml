@@ -26,7 +26,6 @@
 #   8888 — Aidbox
 #   8082 — Blaze (Round 1 addition)
 #   8084 — Spark (Round 1 addition, BSD-3, Incendi-maintained Firely-lineage server)
-#   8085 — HFS (Round 2 spike, MIT, Rust, HeliosSoftware; Postgres backend)
 #
 # Internal service deps (postgres, redis, sqlserver) are not exposed on the
 # host; they only need to be reachable from their server within the compose
@@ -270,94 +269,9 @@ services:
       - ./spark-mongo-init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
 
-  # --- HFS (Round 2 spike) ------------------------------------------------
-  # Helios FHIR Server — MIT-licensed, Rust. Documented production path is
-  # Postgres (doc store) + Elasticsearch (search index), so we run the
-  # split-backend (HFS_STORAGE_BACKEND=postgres-elasticsearch) to match the
-  # vendor's own recommendation. Internal port 8080 → host 8085.
-  # CapabilityStatement at root /metadata.
-  #
-  # Image is built locally from hfs-docker/Dockerfile.fork, which compiles
-  # HFS from our fork (mock-health/hfs @ fix/rest-body-limit-layer) with
-  # the PR #68 body-size fix applied. Without that fix, HFS silently caps
-  # bundles at axum's 2 MiB default regardless of HFS_MAX_BODY_SIZE — ~50%
-  # rejection rate on Synthea bundles. The fork-built binary is packaged
-  # on debian:trixie-slim (GLIBC 2.41), which also sidesteps upstream's
-  # glibc-mismatch packaging bug (published binary is 2.38+ on a 2.36
-  # runtime). See hfs-docker/Dockerfile.fork for rationale.
-  #
-  # To benchmark "as shipped" instead, swap to hfs-docker/Dockerfile
-  # (reuses the upstream binary).
-  hfs:
-    image: fhir-compare-hfs-fork:0.1.47
-    build:
-      context: ../hfs
-      dockerfile: ../fhir-server-compare/hfs-docker/Dockerfile.fork
-    container_name: fhir-compare-hfs
-    depends_on:
-      - hfs-db
-      - hfs-es
-    ports:
-      - "8085:8080"
-    environment:
-      HFS_STORAGE_BACKEND: postgres-elasticsearch
-      HFS_DATABASE_URL: "postgresql://hfs:hfs@hfs-db:5432/hfs"
-      HFS_SERVER_HOST: "0.0.0.0"
-      HFS_SERVER_PORT: "8080"
-      HFS_DEFAULT_FHIR_VERSION: R4
-      HFS_LOG_LEVEL: info
-      HFS_ELASTICSEARCH_NODES: "http://hfs-es:9200"
-      HFS_ELASTICSEARCH_INDEX_PREFIX: hfs
-      # Tells HFS what external URL to publish in Bundle.link.self/next and
-      # Bundle.entry.fullUrl — without this, HFS publishes the internal URL
-      # (http://localhost:8080) which the loadtest loader (and any other
-      # client on the host) cannot reach because Docker maps the container's
-      # 8080 to host 8085. Downstream effect: `harvest_patient_ids` follows
-      # the `next` link, hits localhost:8080, gets "Connection refused" and
-      # the CRUD workload crashes immediately. Setting this to the
-      # externally-reachable URL fixes pagination + fullUrls.
-      HFS_BASE_URL: "http://localhost:8085"
-      # HFS's default max body is 10 MB (axum DefaultBodyLimit wrapping) and
-      # the request timeout is 30s. Both reject ~half of Synthea transaction
-      # bundles out of the gate (chronic patients hit 30-70 MiB; ingest
-      # latency at 1K patients can exceed 30s). Bumping to match the rest of
-      # the roster: 100 MiB body cap, 1500s timeout (same as loader.py:113).
-      HFS_MAX_BODY_SIZE: "104857600"
-      HFS_REQUEST_TIMEOUT: "1500"
-    restart: unless-stopped
-
-  hfs-db:
-    image: postgres@sha256:468e1f126ca5af849799cda06ac9b03d8090aae9fa5163408b3e8da44fad0702  # postgres:16 as of 2026-04-20
-    container_name: fhir-compare-hfs-db
-    environment:
-      POSTGRES_USER: hfs
-      POSTGRES_PASSWORD: hfs
-      POSTGRES_DB: hfs
-    volumes:
-      - hfs-data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  hfs-es:
-    image: docker.elastic.co/elasticsearch/elasticsearch@sha256:01c1732062b4a846c5ca687b0094b89bad0bfed00c6d71626db32fb8f3131a78  # :8.15.3 as of 2026-04-20
-    container_name: fhir-compare-hfs-es
-    environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms6g -Xmx6g"
-      bootstrap.memory_lock: "true"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    volumes:
-      - hfs-es-data:/usr/share/elasticsearch/data
-    restart: unless-stopped
-
 volumes:
   aidbox-data:
   medplum-data:
   msfhir-data:
   blaze-data:
   spark-data:
-  hfs-data:
-  hfs-es-data:
