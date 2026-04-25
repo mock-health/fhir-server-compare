@@ -41,9 +41,9 @@ SERVERS_YAML = REPO_ROOT / "servers.yaml"
 PROFILES_DIR = REPO_ROOT / "benchmark" / "profiles"
 RESULTS_LOADTEST = REPO_ROOT / "results" / "loadtest"
 
-# Local 7-server roster — excludes managed GCP (load-tests against a paid
+# Local 6-server roster — excludes managed GCP (load-tests against a paid
 # managed service would be unfair and expensive).
-ROSTER = ("hapi", "aidbox", "medplum", "msfhir", "blaze", "spark", "hfs")
+ROSTER = ("hapi", "aidbox", "medplum", "msfhir", "blaze", "spark")
 
 # Cell-color thresholds for p50 (median) latency at max_checkpoint_reached.
 # Coarse by design — sub-ms differences are noise; order-of-magnitude

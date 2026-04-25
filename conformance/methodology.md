@@ -45,7 +45,7 @@ Some server/profile pairs can't be scored at all. When that happens the cell is 
 
 The distinction that matters is *why* the probe failed:
 
-- **Route not implemented.** Blaze, Spark, HFS don't route `Patient/$export` at all — they return 4xx with "invalid id" or plain 404. The whole Bulk Data v2 surface is absent, so running kickoff tests would score 0/6 against a feature the vendor never claimed to ship. N/A with reason "Patient/$export operation not implemented."
+- **Route not implemented.** Blaze and Spark don't route `Patient/$export` at all — they return 4xx with "invalid id" or plain 404. The whole Bulk Data v2 surface is absent, so running kickoff tests would score 0/6 against a feature the vendor never claimed to ship. N/A with reason "Patient/$export operation not implemented."
 - **Infra dependency absent.** Aidbox implements bulk data in code, but its dev image requires a cloud storage backend (GCP/Azure/AWS) that I don't provision. The probe returns 500 with `"storage-type not specified"` — body-matched to N/A. The reason string points to the config that would turn the cell on.
 
 **Partial implementation is not N/A.** If the probe succeeds, every test is scored on its own merits even when some fail against a SHOULD or MAY. Medplum is the canonical example: kickoff works for Patient and System export, but `Group/$export` returns 404 (the Medplum server source defines `patientExportHandler` and `bulkExportHandler` only; no group handler). That's a real feature gap against a SHOULD in Bulk Data IG v2 and shows up as amber 5/6 — the right signal to a reader shopping for a server with Group-cohort exports.
@@ -66,7 +66,6 @@ The conformance matrix tests servers brought up via `docker-compose.yml` PLUS th
 | MS FHIR | `mcr.microsoft.com/healthcareapis/r4-fhir-server:latest` | none — default config |
 | Blaze | `samply/blaze:latest` | none — research server; default config |
 | Spark | `sparkfhir/spark:r4-latest` | none — reference impl; default config |
-| HFS | local build (`hfs-docker/Dockerfile.fork`) | none — Rust impl, Postgres+Elasticsearch backend |
 
 The exact env vars are auditable in `docker-compose.yml` + `docker-compose.conformance-features.yml`.
 

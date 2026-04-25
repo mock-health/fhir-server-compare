@@ -7,8 +7,6 @@ release notes (breaking changes, deprecated configs) before bumping the matrix.
 For servers without a GitHub release feed:
   - aidbox: commercial, no upstream repo. Version tracked as "latest" in yaml;
     see https://docs.aidbox.app for the changelog.
-  - hfs:    locally built from our fork (see hfs-docker/Dockerfile.fork). Version
-    is the image tag in docker-compose.yml — bump there when the fork moves.
 
 Usage:
   python scripts/fetch_server_versions.py
@@ -73,8 +71,6 @@ def main() -> None:
             continue
         print(f"{sid:8s}  {tag:22s}  {normalize(sid, tag):10s}  {published}")
     print()
-    print("hfs     — our fork, version tracked as docker-compose image tag "
-          "(fhir-compare-hfs-fork:0.1.47)")
     print("aidbox  — commercial, no release feed; keep version: 'latest' "
           "and rely on source_url for changelog")
 

@@ -29,10 +29,10 @@ from loadtest.metrics import percentile  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RESULTS_ROOT = REPO_ROOT / "results" / "loadtest"
-SERVERS_ORDER = ["hapi", "aidbox", "medplum", "msfhir", "blaze", "spark", "hfs"]
+SERVERS_ORDER = ["hapi", "aidbox", "medplum", "msfhir", "blaze", "spark"]
 SERVER_LABELS = {
     "hapi": "HAPI", "aidbox": "Aidbox", "medplum": "Medplum",
-    "msfhir": "MS FHIR", "blaze": "Blaze", "spark": "Spark", "hfs": "HFS",
+    "msfhir": "MS FHIR", "blaze": "Blaze", "spark": "Spark",
 }
 
 

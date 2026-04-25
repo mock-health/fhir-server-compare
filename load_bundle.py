@@ -10,7 +10,6 @@ Usage:
     python load_bundle.py --server msfhir
     python load_bundle.py --server blaze
     python load_bundle.py --server spark
-    python load_bundle.py --server hfs
 
 Loads one Synthea patient (Aurelio Whorton, 171 resources) as a single
 FHIR transaction bundle. The bundle's internal `urn:uuid:` references are

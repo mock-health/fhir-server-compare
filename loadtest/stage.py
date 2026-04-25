@@ -57,7 +57,6 @@ SERVER_CONTAINERS: dict[str, list[str]] = {
         "fhir-compare-medplum-db", "fhir-compare-medplum-redis",
     ],
     "msfhir":  ["fhir-compare-msfhir", "fhir-compare-msfhir-db"],
-    "hfs":     ["fhir-compare-hfs", "fhir-compare-hfs-db", "fhir-compare-hfs-es"],
 }
 
 

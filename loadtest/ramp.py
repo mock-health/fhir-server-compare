@@ -69,7 +69,7 @@ DEFAULT_SYNTHEA_DIR = REPO_ROOT / "synthea"
 #   Medplum:    690 res/s  (Postgres, 4x load-balanced replicas)
 #   Spark:     ~20  res/s  (MongoDB — ingest-bottlenecked; 1K takes hours)
 # Ordering so the fastest finishes first gives per-checkpoint data faster.
-DEFAULT_SERVER_ORDER = ("blaze", "hapi", "aidbox", "msfhir", "medplum", "spark", "hfs")
+DEFAULT_SERVER_ORDER = ("blaze", "hapi", "aidbox", "msfhir", "medplum", "spark")
 
 # Phased CRUD: per-verb (sample_cap, time_cap_seconds).
 # R and V are fastest, bounded tighter on time — they should always hit
@@ -108,15 +108,12 @@ VOLUME_MAP = {
     "msfhir":  "fhir-server-compare_msfhir-data",
     "blaze":   "fhir-server-compare_blaze-data",
     "spark":   "fhir-server-compare_spark-data",
-    "hfs":     "fhir-server-compare_hfs-data",
 }
 
-# HFS has a second named volume (Elasticsearch) that reset_server also nukes.
-# Keyed by server id so we can add more split-backend servers without changing
-# the reset loop shape.
-EXTRA_VOLUMES = {
-    "hfs": ["fhir-server-compare_hfs-es-data"],
-}
+# Servers with a second named volume (e.g., a search-index sidecar) that
+# reset_server also nukes. Empty by default; populate per server when adding
+# split-backend servers.
+EXTRA_VOLUMES: dict[str, list[str]] = {}
 
 
 def _run(cmd: list[str], check: bool = True) -> int:
@@ -169,9 +166,6 @@ def _services_for(server_id: str) -> list[str]:
         # composite indexes on first startup of a fresh volume — without
         # them, ingest is ~70x slower (COLLSCAN per upsert).
         "spark":   ["spark", "spark-db"],
-        # HFS (Round 2 spike) — Postgres + Elasticsearch split-backend,
-        # matching the vendor's documented production path.
-        "hfs":     ["hfs", "hfs-db", "hfs-es"],
     }[server_id]
 
 

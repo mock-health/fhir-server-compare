@@ -108,9 +108,9 @@ def applicability_probe(server_cfg: dict, base_url: str,
     return False, f"probe {method} {path} → {resp.status_code}"
 
 
-# The 7-server OSS roster — every server here can be reproduced locally
+# The 6-server OSS roster — every server here can be reproduced locally
 # via docker-compose.yml with no paid license or managed-service account.
-ROSTER = ("hapi", "msfhir", "medplum", "aidbox", "blaze", "hfs", "spark")
+ROSTER = ("hapi", "msfhir", "medplum", "aidbox", "blaze", "spark")
 
 
 def smoke_check(servers_yaml: pathlib.Path, targets: list[str]) -> list[str]:
