@@ -1,0 +1,116 @@
+name: CI
+
+# Public benchmark repo: keep CI cheap and reliable. We don't run the actual
+# ramp/conformance against live servers in CI — those need a 6-server compose
+# stack and hours of runtime. CI's job is to catch import breakage, schema
+# drift, and obviously-broken docker-compose YAML before a PR merges.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Default to read-only token scope; tighten by job if needed. New repos
+# inherit a wider token scope by default.
+permissions:
+  contents: read
+
+# Cancel in-flight runs of the same workflow on the same ref so we don't
+# waste minutes on superseded pushes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Imports + tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package (editable + dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run pytest
+        run: pytest tests/ -v
+
+      - name: Smoke — imports + CLI --help + path math
+        # Re-uses scripts/smoke.sh but skips the docker compose validation
+        # (covered separately in the `compose` job below to keep matrix lean).
+        run: |
+          python -c "from fhirbench import servers, compare, load_bundle"
+          python -c "from fhirbench.harness import ramp, stage, loader, workload_crud, workload_search"
+          python -c "from fhirbench.benchmark import parse_report"
+          python -c "from fhirbench.conformance import runner, run"
+          python -c "from fhirbench.publish import copy_to_studio, badges"
+          python -c "from fhirbench.cli import compare_harnesses, emit_k6_context, fetch_server_versions"
+          python -m fhirbench.harness.ramp --help > /dev/null
+          python -m fhirbench.compare --help > /dev/null
+          python -m fhirbench.publish.copy_to_studio --help > /dev/null
+          python -c "import fhirbench.publish.copy_to_studio as m; assert m.REPO_ROOT.name == 'fhir-server-compare'"
+
+  compose:
+    name: Docker compose validates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate base stack
+        run: docker compose -f docker-compose.yml config -q
+
+      - name: Validate loadtest overlay
+        run: docker compose -f docker-compose.yml -f docker-compose.loadtest.yml config -q
+
+      - name: Validate conformance overlay
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.conformance.yml \
+            -f docker-compose.conformance-features.yml \
+            config -q
+
+  schema:
+    name: Round artifact schema validates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip jsonschema pyyaml
+      - name: Schema-check committed round artifacts
+        # Every results/rounds/<id>/{benchmark,conformance}.json must validate
+        # against schema/round-v1.schema.json. Catches accidental schema drift.
+        run: |
+          python <<'PY'
+          import json, pathlib, sys
+          import jsonschema
+
+          schema = json.loads(pathlib.Path("schema/round-v1.schema.json").read_text())
+          rc = 0
+          for art in pathlib.Path("results/rounds").glob("*/*.json"):
+              if art.name in ("MANIFEST.json",):
+                  continue
+              try:
+                  jsonschema.validate(json.loads(art.read_text()), schema)
+                  print(f"  OK  {art}")
+              except Exception as e:
+                  print(f"  FAIL {art}: {type(e).__name__}: {e}", file=sys.stderr)
+                  rc = 1
+          sys.exit(rc)
+          PY
