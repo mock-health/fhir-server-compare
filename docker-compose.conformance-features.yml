@@ -25,7 +25,7 @@
 #             "storage-type not specified" with these env vars set, suggesting
 #             the storage destination needs configuration via an Aidbox-Project
 #             resource (admin API) rather than env vars on this image.
-#             Documented as a partial fix in methodology.md; v0.2 will wire
+#             Documented as a partial fix in docs/conformance-methodology.md; v0.2 will wire
 #             the proper Aidbox-Project storage config via a bootstrap script.
 #
 #   MS FHIR — NOT modified by this overlay.

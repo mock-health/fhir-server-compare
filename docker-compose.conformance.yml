@@ -6,7 +6,7 @@
 #   - auth-proxy-aidbox        : injects HTTP Basic header for Aidbox. Uses
 #                                the `fhir-compare` Client provisioned by the
 #                                init bundle at
-#                                conformance-docker/aidbox-init/initbundle.json
+#                                docker/conformance-services/aidbox-init/initbundle.json
 #                                (not the legacy auto-provisioned basic-client).
 #   - auth-proxy-medplum       : injects OAuth2 Bearer token for Medplum
 #                                (refreshes before expiry)
@@ -36,7 +36,7 @@ services:
 
   testscript-engine:
     build:
-      context: ./conformance-docker
+      context: ./docker/conformance-services
       dockerfile: Dockerfile.testscript-engine
       args:
         TESTSCRIPT_ENGINE_REF: main
@@ -59,7 +59,7 @@ services:
 
   auth-proxy-aidbox:
     build:
-      context: ./conformance-docker
+      context: ./docker/conformance-services
       dockerfile: Dockerfile.auth-proxy
     image: fhir-compare-auth-proxy:0.1.0
     container_name: fhir-compare-auth-proxy-aidbox
