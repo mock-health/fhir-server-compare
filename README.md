@@ -133,5 +133,14 @@ See `CONTRIBUTING.md` for submission guidelines.
 - **One patient, not a thousand.** Structural divergence surfaces on the first query; volume is the performance story, not the correctness story.
 - **Latency is informational, not benchmark-quality.** The single-patient matrix is cold-cache, single-threaded, sample-of-one. The load test is the serious performance story.
 - **No writes except the initial load.** `compare.py` is GET-only (and `Patient/$export`, which is read-intent per the Bulk Data spec).
-- **No credentials needed beyond your own Aidbox dev license.** Everything else runs on your machine.
+- **No credentials needed.** The `aidboxone:latest` image runs out-of-box with the reference starter config from `aidbox.app/runme`; everything else runs on your machine with zero-config defaults.
 - **All OSS.** Every server in the matrix can be reproduced locally; no managed services, no paid tiers.
+
+## Related work
+
+This project is a neutral-territory observatory: one harness, every server, published numbers with methodology. It sits alongside vendor-run benchmarks, not in place of them. Two that are worth reading when working in this space:
+
+- [**HealthSamurai/fhir-server-performance-benchmark**](https://github.com/HealthSamurai/fhir-server-performance-benchmark) — the Aidbox team's own benchmark (k6, multi-vendor, CI-driven). mock.health's Aidbox configuration, index set, and `BOX_FHIR_SEARCH_DEFAULT_PARAMS_TOTAL` setting mirror their recommendations verbatim — see [`benchmark/methodology.md`](benchmark/methodology.md#vendor-recommended-configuration).
+- Vendor-specific performance docs linked per-server in [`benchmark/methodology.md`](benchmark/methodology.md).
+
+If you run a FHIR server and have a recommended configuration, benchmark result, or methodology note you'd like reflected here, open an issue or PR.

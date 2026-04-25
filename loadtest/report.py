@@ -243,33 +243,45 @@ def resource_peak(csv_path: Path) -> dict:
     }
 
 
-def disk_used(disk_json_path: Path, server_id: str) -> float:
-    """Sum bytes of the Docker volumes owned by this server. Returns GB."""
+def disk_used_bytes(disk_json_path: Path, server_id: str) -> int | None:
+    """Sum bytes of the Docker volumes owned by this server.
+
+    Returns None when `disk.json` is missing or unparseable so callers can
+    distinguish "no measurement" from "zero bytes" — important because some
+    servers legitimately have tiny on-disk footprints and 0 is a real value.
+
+    Caveat: `docker system df -v` only sees **named volumes**. Bind-mounted
+    data directories are invisible here. All seven servers in the roster use
+    named volumes declared in docker-compose.loadtest.yml, so this is fine
+    for the current matrix, but a future server with a bind mount will read
+    as 0 bytes — fix the compose file, not this function.
+    """
     if not disk_json_path.exists():
-        return 0.0
+        return None
     try:
         data = json.loads(disk_json_path.read_text())
     except Exception:
-        # `docker system df -v --format json` isn't parseable on older docker; skip
-        return 0.0
-    # Newer docker: {"Volumes":[{"Name":"...","Size":"1.2GB",...}], ...}
+        return None
     vols = data.get("Volumes") or []
-    # Fallback: data may be a list of objects
     if isinstance(data, list):
         vols = [d for d in data if d.get("Type") == "Volume"]
     prefix = f"fhir-server-compare_{server_id}"
+    from loadtest.resources import parse_size
     total = 0.0
+    matched = False
     for v in vols:
         name = v.get("Name", "")
         if not name.startswith(prefix) and server_id not in name:
             continue
-        size_str = str(v.get("Size", "0B"))
-        try:
-            from loadtest.resources import parse_size
-            total += parse_size(size_str)
-        except Exception:
-            pass
-    return total / 1024**3
+        matched = True
+        total += parse_size(str(v.get("Size", "0B")))
+    return int(total) if matched else None
+
+
+def disk_used(disk_json_path: Path, server_id: str) -> float:
+    """Backward-compat wrapper: volume bytes in GB (None coerced to 0)."""
+    b = disk_used_bytes(disk_json_path, server_id)
+    return (b or 0) / 1024**3
 
 
 # ---------------------------------------------------------------------------

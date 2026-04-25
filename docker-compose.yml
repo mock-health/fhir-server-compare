@@ -53,9 +53,23 @@ services:
     restart: unless-stopped
 
   # --- Aidbox -------------------------------------------------------------
-  # Free dev license required (register at aidbox.app, pasted into .env as
-  # AIDBOX_LICENSE). aidboxone bundles storage — no external Postgres needed
-  # for the dev tier.
+  # Env shape is the `AIDBOX_*` legacy surface (proven to work with our
+  # auth-proxy + compare.py harness). We pick up two vendor-recommended knobs
+  # from the `BOX_*` namespace — they're additive and don't conflict with the
+  # legacy envs:
+  #   - BOX_FHIR_SEARCH_DEFAULT_PARAMS_TOTAL=none  (disables implicit COUNT(*))
+  #   - BOX_INIT_BUNDLE                            (installs an AccessPolicy
+  #                                                  bundle at startup —
+  #                                                  currently unused but
+  #                                                  staged for the eventual
+  #                                                  proxy-less auth migration)
+  # Backing Postgres has moved from the deprecated `healthsamurai/aidboxdb`
+  # image to stock `postgres:18` — matches Health Samurai's own benchmark.
+  #
+  # Migrating a richer BOX_* env shape (à la `aidbox.app/runme`) is a
+  # follow-up: in that mode `BOX_SECURITY_DEV_MODE=true` + `BOX_SETTINGS_MODE`
+  # force the FHIR API through the UI auth flow, breaking proxy-less Basic.
+  # Once that's sorted we can retire `auth-proxy-aidbox` entirely.
   aidbox:
     image: healthsamurai/aidboxone@sha256:8af7d51a00832a853ffd25255fb9c569de1a4ee62aef877afe20847e873b5fa4  # :latest (Aidbox 2603) as of 2026-04-20
     container_name: fhir-compare-aidbox
@@ -63,6 +77,11 @@ services:
       - aidbox-db
     ports:
       - "8888:8888"
+    volumes:
+      # AccessPolicy + Client bundle — applied by Aidbox at first boot via
+      # BOX_INIT_BUNDLE. Not load-bearing for the current Basic-via-proxy
+      # path, but pre-wires the resources needed for a proxy-less cutover.
+      - ./conformance-docker/aidbox-init/initbundle.json:/tmp/initbundle.json:ro
     environment:
       AIDBOX_LICENSE: "${AIDBOX_LICENSE:-}"
       AIDBOX_CLIENT_ID: "${AIDBOX_CLIENT_ID:-basic-client}"
@@ -74,17 +93,42 @@ services:
       PGHOST: aidbox-db
       PGPORT: "5432"
       PGUSER: aidbox
-      PGPASSWORD: aidbox
+      PGPASSWORD: "${AIDBOX_DB_PASSWORD:-aidbox}"
       PGDATABASE: aidbox
+      # Vendor-recommended: disable implicit _total=accurate on every search.
+      # Computing the total count is a COUNT(*) over the filtered result set
+      # and is the dominant cost for many Aidbox search queries. Queries that
+      # *do* want an accurate total request it explicitly in the URL
+      # (e.g. observation_search_total_accurate in benchmark/profiles/search.yaml).
+      BOX_FHIR_SEARCH_DEFAULT_PARAMS_TOTAL: none
+      BOX_INIT_BUNDLE: file:///tmp/initbundle.json
     restart: unless-stopped
 
+  # Stock Postgres 18 for Aidbox. The old `healthsamurai/aidboxdb` image was
+  # deprecated ~12 months ago in favor of upstream Postgres — Health Samurai's
+  # own benchmark uses postgres:18 too. `pg_stat_statements` preloaded for
+  # post-run EXPLAIN analysis (matches other backing DBs in this stack).
+  # Aidbox 2603 connects via the `PG*` legacy envs above; no PGDATA override
+  # here so postgres:18 uses its default path at /var/lib/postgresql/18/docker.
+  # If migrating from a prior compose stack that stored PG16 data in the
+  # `aidbox-data` volume, remove it first (`docker volume rm
+  # fhir-server-compare_aidbox-data`) before bringing this stack up — PG18
+  # will refuse to reuse a PG16 cluster.
   aidbox-db:
-    image: healthsamurai/aidboxdb@sha256:e59d1afa672dec0288ee1d5005599c61eac06f4ce9558a5cba02042ecacdedf7  # :16 as of 2026-04-20
+    image: postgres:18
     container_name: fhir-compare-aidbox-db
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
     environment:
       POSTGRES_USER: aidbox
-      POSTGRES_PASSWORD: aidbox
+      POSTGRES_PASSWORD: "${AIDBOX_DB_PASSWORD:-aidbox}"
       POSTGRES_DB: aidbox
+      # postgres:18 defaults PGDATA to /var/lib/postgresql/18/docker. Pin the
+      # classic /var/lib/postgresql/data path so the volume bind target is
+      # stable across Postgres major-version bumps on our side.
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - aidbox-data:/var/lib/postgresql/data
     restart: unless-stopped

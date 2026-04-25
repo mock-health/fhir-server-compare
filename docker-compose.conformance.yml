@@ -3,12 +3,25 @@
 # Adds:
 #   - testscript-engine        : AEGIS executor (one-shot Ruby CLI invoked by
 #                                loadtest/conformance/run.py per server)
-#   - auth-proxy-aidbox        : injects HTTP Basic header for Aidbox
+#   - auth-proxy-aidbox        : injects HTTP Basic header for Aidbox. Uses
+#                                the `fhir-compare` Client provisioned by the
+#                                init bundle at
+#                                conformance-docker/aidbox-init/initbundle.json
+#                                (not the legacy auto-provisioned basic-client).
 #   - auth-proxy-medplum       : injects OAuth2 Bearer token for Medplum
 #                                (refreshes before expiry)
 #
 # Anonymous servers (HAPI, MS FHIR, Blaze, Spark, HFS) are reached directly
 # by service name on the shared docker network — no proxy needed.
+#
+# Aidbox note: the `aidbox.app/runme` reference config Health Samurai
+# publishes (and which our base docker-compose.yml mirrors) runs Aidbox in
+# dev mode with UI-based auth, where Basic-auth requests to FHIR endpoints
+# are redirected through the OAuth2 login flow regardless of whether the
+# credentials validate. That makes proxy-less Basic auth from test harnesses
+# unreliable out of the box, so we keep an inline proxy that injects the
+# Basic header client-side. Dropping this proxy cleanly is a follow-up —
+# tracked in ROADMAP under "Aidbox proxy-less auth".
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.conformance.yml up -d \

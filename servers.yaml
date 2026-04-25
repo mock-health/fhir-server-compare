@@ -8,7 +8,7 @@
 #
 # Auth types handled by the shim in compare.py:
 #   none               — no Authorization header (HAPI default, MS FHIR dev mode)
-#   basic              — HTTP Basic (Aidbox client_credentials-as-basic)
+#   basic              — HTTP Basic (Aidbox via init-bundle-provisioned client)
 #   client_credentials — OAuth2 client_credentials token fetch (Medplum)
 #
 # Env var interpolation in strings uses ${VAR} (required) or ${VAR:-default}

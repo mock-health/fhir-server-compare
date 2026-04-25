@@ -1,0 +1,313 @@
+{
+  "generated_at": "2026-04-24T23:47:07Z",
+  "workload": "search",
+  "servers": [
+    {
+      "id": "hapi",
+      "label": "HAPI",
+      "version": "8.8.0-1",
+      "base_url": "http://localhost:8080/fhir",
+      "auth_headers": {},
+      "extra_headers": {}
+    }
+  ],
+  "queries": [
+    {
+      "name": "capability_statement",
+      "method": "GET",
+      "path": "metadata",
+      "params": {},
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "observation_search_default",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "_count": "10"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "observation_search_total_accurate",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "_count": "1",
+        "_total": "accurate"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "observation_by_code",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "code": "http://loinc.org|8480-6",
+        "_count": "1",
+        "_total": "accurate"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "q1_uscore_observation_combo",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "combo-code": "http://loinc.org|8480-6",
+        "_count": "1",
+        "_total": "accurate"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "patient_by_gender",
+      "method": "GET",
+      "path": "Patient",
+      "params": {
+        "gender": "male",
+        "_count": "5",
+        "_total": "accurate"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "patient_by_family_prefix",
+      "method": "GET",
+      "path": "Patient",
+      "params": {
+        "family": "S",
+        "_count": "5"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "patient_by_given_prefix",
+      "method": "GET",
+      "path": "Patient",
+      "params": {
+        "given": "A",
+        "_count": "5"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "patient_by_gender_family",
+      "method": "GET",
+      "path": "Patient",
+      "params": {
+        "gender": "female",
+        "family": "B",
+        "_count": "5"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "observation_by_height",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "code": "http://loinc.org|8302-2",
+        "_count": "5",
+        "_total": "accurate"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "observation_by_weight",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "code": "http://loinc.org|29463-7",
+        "_count": "5",
+        "_total": "accurate"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "observation_by_pain",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "code": "http://loinc.org|72514-3",
+        "_count": "5",
+        "_total": "accurate"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "observation_recent",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "date": "ge2020-01-01",
+        "_count": "5"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {}
+    },
+    {
+      "name": "patient_read_by_id",
+      "method": "GET",
+      "path": "Patient/{{patient_id}}",
+      "params": {},
+      "headers": {},
+      "body": null,
+      "sample": {
+        "patient_id": "patient_id"
+      }
+    },
+    {
+      "name": "patient_by_family_exact",
+      "method": "GET",
+      "path": "Patient",
+      "params": {
+        "family": "{{family}}",
+        "_count": "5"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "family": "patient_family"
+      }
+    },
+    {
+      "name": "observations_for_patient",
+      "method": "GET",
+      "path": "Observation",
+      "params": {
+        "patient": "Patient/{{patient_id}}",
+        "_count": "20"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "patient_id": "patient_id"
+      }
+    },
+    {
+      "name": "conditions_for_patient",
+      "method": "GET",
+      "path": "Condition",
+      "params": {
+        "patient": "Patient/{{patient_id}}"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "patient_id": "patient_id"
+      }
+    },
+    {
+      "name": "condition_by_code",
+      "method": "GET",
+      "path": "Condition",
+      "params": {
+        "code": "{{code}}",
+        "_count": "5"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "code": "condition_code"
+      }
+    },
+    {
+      "name": "procedure_by_code",
+      "method": "GET",
+      "path": "Procedure",
+      "params": {
+        "code": "{{code}}",
+        "_count": "5"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "code": "procedure_code"
+      }
+    },
+    {
+      "name": "encounter_by_patient",
+      "method": "GET",
+      "path": "Encounter",
+      "params": {
+        "patient": "Patient/{{patient_id}}",
+        "_count": "10"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "patient_id": "patient_id"
+      }
+    },
+    {
+      "name": "medication_request_by_patient",
+      "method": "GET",
+      "path": "MedicationRequest",
+      "params": {
+        "patient": "Patient/{{patient_id}}",
+        "_count": "10"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "patient_id": "patient_id"
+      }
+    },
+    {
+      "name": "encounter_by_practitioner",
+      "method": "GET",
+      "path": "Encounter",
+      "params": {
+        "participant": "Practitioner/{{practitioner_id}}",
+        "_count": "10"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "practitioner_id": "practitioner_id"
+      }
+    },
+    {
+      "name": "encounter_by_location",
+      "method": "GET",
+      "path": "Encounter",
+      "params": {
+        "location": "Location/{{location_id}}",
+        "_count": "10"
+      },
+      "headers": {},
+      "body": null,
+      "sample": {
+        "location_id": "location_id"
+      }
+    }
+  ],
+  "servers_yaml_digest": "sha256:f6d4fe14af3e0f6216f757b358dbf9c7e4b3d01e22ae543c7f43141071501067",
+  "queries_yaml_digest": "sha256:b8eaf49cf95a944de5ecf4920cffd7ca25b62d26c610c7d1c1dc8b1fdeb132dc"
+}

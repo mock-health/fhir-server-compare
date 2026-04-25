@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aidbox search-index bootstrap — CREATE INDEX on each resource table.
+"""Aidbox search-index bootstrap — port of Health Samurai's own benchmark indexes.
 
 Aidbox community edition (2603) ships with zero Postgres indexes on the
 per-resource tables beyond the primary key. Every FHIR search translates to a
@@ -9,14 +9,31 @@ search on a 63K-patient corpus (~1.9M Observation rows). This is what produced
 our ramp-50k aidbox search p90 of 13.5s at 1K, climbing to 56s / 94% errors
 at 64K.
 
-The fix is one `CREATE INDEX ... USING gin (resource jsonb_path_ops)` per
-resource table whose search queries are benchmarked. `jsonb_path_ops` is the
-exact opclass the `@>` operator uses, and it's about 30% smaller on disk
-than the default `jsonb_ops` because it only supports `@>`.
+The index set below is a verbatim port of what Health Samurai applies in their
+own benchmark — they know their engine, and treating their configuration as
+the vendor-recommended baseline is the same species of fairness we already
+apply for MS FHIR (`x-bundle-processing-logic: parallel`) and Spark
+(`spark-mongo-init/01-create-indexes.js`). Sources:
+  - github.com/HealthSamurai/fhir-server-performance-benchmark/infra/aidbox/initbundle.json
+  - github.com/HealthSamurai/fhir-server-performance-benchmark/ci_search_suite.yaml
 
-We POST `CREATE INDEX` through aidbox's documented `/$sql` admin endpoint —
-the same endpoint aidbox's own console uses. No back-door, no shell exec into
-the container. Anyone reproducing the benchmark runs this script identically.
+Index categories:
+  1. GIN(resource jsonb_path_ops) on every resource table whose FHIR search
+     we exercise. `jsonb_path_ops` is the exact opclass the `@>` operator
+     uses; ~30% smaller on disk than `jsonb_ops`.
+  2. Patient name trigram indexes using Aidbox's `knife_extract_text()` +
+     `aidbox_text_search()` functions over a JSON path set
+     (name.family | given | middle | text | prefix | suffix). Dual-index
+     pattern: one with `gin_trgm_ops` for substring search, one plain GIN.
+  3. Patient given-name trigram + plain indexes (same pattern, narrower path).
+  4. Patient birthdate btree indexes on `knife_extract_min_timestamptz()` /
+     `knife_extract_max_timestamptz()` + a compound (min, max) index for
+     date-range predicates.
+
+We POST every `CREATE INDEX` through aidbox's documented `/$sql` admin
+endpoint — the same endpoint aidbox's own console uses. No back-door, no
+shell exec into the container. Anyone reproducing the benchmark runs this
+script identically.
 
 This script is infrastructure-as-code: the SQL it executes is the operator
 configuration an aidbox deployment would need to ship out-of-the-box to match
@@ -56,41 +73,132 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SERVERS = REPO_ROOT / "servers.yaml"
 DEFAULT_BASE_URL = "http://localhost:8888/fhir"
 
-# One GIN(resource jsonb_path_ops) index per resource table whose search queries
-# are exercised by the benchmark workload. Drawn from queries.yaml's
-# loadtest=include queries: Patient, Observation, Condition, Procedure,
-# Encounter, MedicationRequest.
-#
-# Aidbox stores each FHIR resource in its own lowercase-named table, with the
-# full JSON body in the `resource` column. A GIN jsonb_path_ops index on that
-# column accelerates the `@>` predicate aidbox's query generator emits for
-# every search parameter on the base resource.
-INDEXED_TABLES: tuple[str, ...] = (
+# Superset of:
+#   - queries.yaml's loadtest=include resource tables (patient, observation,
+#     condition, procedure, encounter, medicationrequest) — ours
+#   - Health Samurai's upstream index set (claim, encounter, explanationofbenefit,
+#     location, medicationrequest, observation, organization, patient,
+#     practitioner) — theirs
+# Union covers every table the benchmark exercises plus every table Aidbox's
+# own benchmark does.
+_GIN_TABLES: tuple[str, ...] = (
+    "claim",
     "condition",
     "encounter",
+    "explanationofbenefit",
+    "location",
     "medicationrequest",
     "observation",
+    "organization",
     "patient",
+    "practitioner",
     "procedure",
 )
 
 
-def _index_name(table: str) -> str:
-    return f"{table}_resource_gin_path"
+# Specialized Patient indexes from HealthSamurai/fhir-server-performance-benchmark.
+# These use Aidbox's own SQL helpers (knife_extract_text / aidbox_text_search /
+# knife_extract_min_timestamptz / knife_extract_max_timestamptz). Those
+# functions ship with Aidbox and are not part of stock Postgres, so this DDL
+# is Aidbox-specific by design — that's the point: we're mirroring the
+# vendor's own benchmark configuration.
+_PATIENT_NAME_PATHS = (
+    '[["name","family"],["name","given"],["name","middle"],'
+    '["name","text"],["name","prefix"],["name","suffix"]]'
+)
+_PATIENT_GIVEN_PATHS = '[["name","given"]]'
+_PATIENT_BIRTHDATE_PATH = '[["birthDate"]]'
 
 
-def _index_ddl(table: str) -> str:
-    return (
-        f"CREATE INDEX IF NOT EXISTS {_index_name(table)} "
-        f"ON {table} USING gin (resource jsonb_path_ops)"
-    )
+# Each entry is (index_name, ddl_sql). DDL is always idempotent
+# (CREATE INDEX IF NOT EXISTS) and deterministic. If you change this list,
+# the sentinel hash changes, forcing a re-bootstrap on next run.
+def _build_index_list() -> tuple[tuple[str, str], ...]:
+    indexes: list[tuple[str, str]] = []
+
+    # pg_trgm is required for gin_trgm_ops; Aidbox may or may not install it by
+    # default, so we do so ourselves. Safe on a fresh DB and idempotent.
+    indexes.append((
+        "ext_pg_trgm",
+        "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+    ))
+
+    # Category 1: GIN(resource jsonb_path_ops) per table.
+    for table in _GIN_TABLES:
+        name = f"{table}_resource_gin_path"
+        indexes.append((
+            name,
+            f"CREATE INDEX IF NOT EXISTS {name} "
+            f"ON {table} USING gin (resource jsonb_path_ops)",
+        ))
+
+    # Category 2: Patient name indexes (trgm + plain).
+    indexes.append((
+        "patient_name_param_knife_string_trgm",
+        "CREATE INDEX IF NOT EXISTS patient_name_param_knife_string_trgm "
+        "ON patient USING gin "
+        f"((aidbox_text_search(knife_extract_text(resource, '{_PATIENT_NAME_PATHS}'))) "
+        "gin_trgm_ops)",
+    ))
+    indexes.append((
+        "patient_name_param_knife_string",
+        "CREATE INDEX IF NOT EXISTS patient_name_param_knife_string "
+        "ON patient USING gin "
+        f"((knife_extract_text(resource, '{_PATIENT_NAME_PATHS}')))",
+    ))
+
+    # Category 3: Patient given-name indexes (trgm + plain).
+    indexes.append((
+        "patient_given_param_knife_string_trgm",
+        "CREATE INDEX IF NOT EXISTS patient_given_param_knife_string_trgm "
+        "ON patient USING gin "
+        f"((aidbox_text_search(knife_extract_text(resource, '{_PATIENT_GIVEN_PATHS}'))) "
+        "gin_trgm_ops)",
+    ))
+    indexes.append((
+        "patient_given_param_knife_string",
+        "CREATE INDEX IF NOT EXISTS patient_given_param_knife_string "
+        "ON patient USING gin "
+        f"((knife_extract_text(resource, '{_PATIENT_GIVEN_PATHS}')))",
+    ))
+
+    # Category 4: Patient birthdate indexes (min, max, compound).
+    indexes.append((
+        "patient_birthdate_param_knife_date_min_tstz",
+        "CREATE INDEX IF NOT EXISTS patient_birthdate_param_knife_date_min_tstz "
+        "ON patient USING btree "
+        f"((knife_extract_min_timestamptz(resource, '{_PATIENT_BIRTHDATE_PATH}')))",
+    ))
+    indexes.append((
+        "patient_birthdate_param_knife_date_max_tstz",
+        "CREATE INDEX IF NOT EXISTS patient_birthdate_param_knife_date_max_tstz "
+        "ON patient USING btree "
+        f"((knife_extract_max_timestamptz(resource, '{_PATIENT_BIRTHDATE_PATH}')))",
+    ))
+    indexes.append((
+        "patient_birthdate_param_knife_date_min_max_tstz",
+        "CREATE INDEX IF NOT EXISTS patient_birthdate_param_knife_date_min_max_tstz "
+        "ON patient USING btree "
+        f"((knife_extract_min_timestamptz(resource, '{_PATIENT_BIRTHDATE_PATH}')), "
+        f"((knife_extract_max_timestamptz(resource, '{_PATIENT_BIRTHDATE_PATH}'))))",
+    ))
+
+    return tuple(indexes)
+
+
+INDEXES: tuple[tuple[str, str], ...] = _build_index_list()
+
+# Back-compat alias: other call sites and meta emitters used to import
+# INDEXED_TABLES. Keep a slim projection (just the base-table GIN entries) so
+# existing `.tables_indexed` fields in sentinel files remain meaningful.
+INDEXED_TABLES: tuple[str, ...] = _GIN_TABLES
 
 
 def _ddl_set_hash() -> str:
-    """Sentinel hash — changes if INDEXED_TABLES is edited."""
+    """Sentinel hash — changes if INDEXES is edited."""
     h = hashlib.sha256()
-    for t in INDEXED_TABLES:
-        h.update(_index_ddl(t).encode())
+    for _name, ddl in INDEXES:
+        h.update(ddl.encode())
     return h.hexdigest()[:16]
 
 
@@ -110,7 +218,7 @@ def _sentinel_up_to_date(sentinel_dir: Path) -> bool:
 
 
 def _write_sentinel(
-    sentinel_dir: Path, wall_s: float, per_table: dict[str, float],
+    sentinel_dir: Path, wall_s: float, per_index: dict[str, float],
     probe_before_ms: float | None, probe_after_ms: float | None,
 ) -> None:
     sentinel_dir.mkdir(parents=True, exist_ok=True)
@@ -118,15 +226,19 @@ def _write_sentinel(
         "completed_at": time.time(),
         "wall_seconds": round(wall_s, 3),
         "tables_indexed": list(INDEXED_TABLES),
-        "per_table_seconds": {k: round(v, 3) for k, v in per_table.items()},
+        "indexes_applied": [n for n, _ in INDEXES],
+        "per_index_seconds": {k: round(v, 3) for k, v in per_index.items()},
         "ddl_set_hash": _ddl_set_hash(),
         "probe_before_ms": probe_before_ms,
         "probe_after_ms": probe_after_ms,
         "aidbox_version": "2603",
         "note": (
-            "Each index is CREATE INDEX ... USING gin (resource jsonb_path_ops). "
-            "Required because aidbox 2603 ships no per-resource-table indexes "
-            "beyond the primary key; every FHIR search is a Seq Scan otherwise."
+            "Index set ported verbatim from HealthSamurai/fhir-server-"
+            "performance-benchmark (initbundle.json + ci_search_suite.yaml). "
+            "Covers GIN(resource jsonb_path_ops) on 11 resource tables plus "
+            "Patient name/given trigram + birthdate btree indexes. Required "
+            "because Aidbox 2603 ships no per-resource-table indexes beyond "
+            "the primary key; every FHIR search is a Seq Scan otherwise."
         ),
     }, indent=2))
 
@@ -173,7 +285,10 @@ def _probe(
 
 
 def _existing_indexes(client: httpx.Client, sql_url: str, headers: dict) -> set[str]:
-    want = ", ".join(f"'{_index_name(t)}'" for t in INDEXED_TABLES)
+    # `ext_pg_trgm` is a CREATE EXTENSION, not an index — it won't appear in
+    # pg_indexes, so filter it out of the existence probe.
+    index_names = [n for n, _ in INDEXES if not n.startswith("ext_")]
+    want = ", ".join(f"'{n}'" for n in index_names)
     resp = client.post(
         sql_url, headers=headers, timeout=60.0,
         json=[f"SELECT indexname FROM pg_indexes WHERE schemaname='public' "
@@ -204,7 +319,7 @@ def run_bootstrap(
     t0 = time.monotonic()
     probe_before: float | None = None
     probe_after: float | None = None
-    per_table: dict[str, float] = {}
+    per_index: dict[str, float] = {}
 
     with httpx.Client(timeout=120.0) as client:
         try:
@@ -215,7 +330,8 @@ def run_bootstrap(
 
         print(f"Aidbox index bootstrap (aidbox-root={aidbox_root})")
         print(f"  ddl set hash: {_ddl_set_hash()}")
-        print(f"  target tables: {', '.join(INDEXED_TABLES)}")
+        print(f"  indexes to apply: {len(INDEXES)} "
+              f"({len(INDEXED_TABLES)} tables + Patient specialized + pg_trgm)")
 
         already = _existing_indexes(client, sql_url, headers)
         if already:
@@ -229,17 +345,25 @@ def run_bootstrap(
             else:
                 print(f"  pre-index probe median: {probe_before:.1f} ms")
 
-        for table in INDEXED_TABLES:
-            idx = _index_name(table)
-            if idx in already:
-                print(f"  [{table:<20}] index exists — skip")
-                per_table[table] = 0.0
+        for name, ddl in INDEXES:
+            if name.startswith("ext_"):
+                # CREATE EXTENSION — always issue, idempotent via IF NOT EXISTS.
+                print(f"  [{name:<50}] {ddl.split(' IF ')[0]} …", end=" ", flush=True)
+                t_one = time.monotonic()
+                _sql(client, sql_url, headers, ddl)
+                elapsed = time.monotonic() - t_one
+                per_index[name] = elapsed
+                print(f"ok in {elapsed:.1f}s")
                 continue
-            print(f"  [{table:<20}] CREATE INDEX {idx} …", end=" ", flush=True)
-            t_tbl = time.monotonic()
-            _sql(client, sql_url, headers, _index_ddl(table))
-            elapsed = time.monotonic() - t_tbl
-            per_table[table] = elapsed
+            if name in already:
+                print(f"  [{name:<50}] index exists — skip")
+                per_index[name] = 0.0
+                continue
+            print(f"  [{name:<50}] CREATE INDEX …", end=" ", flush=True)
+            t_one = time.monotonic()
+            _sql(client, sql_url, headers, ddl)
+            elapsed = time.monotonic() - t_one
+            per_index[name] = elapsed
             print(f"ok in {elapsed:.1f}s")
 
         if probe:
@@ -255,11 +379,11 @@ def run_bootstrap(
 
     wall = time.monotonic() - t0
     print(f"\nAidbox bootstrap complete in {wall:.1f}s "
-          f"({len([v for v in per_table.values() if v > 0])} new index(es), "
-          f"{len([v for v in per_table.values() if v == 0])} preexisting).")
+          f"({len([v for v in per_index.values() if v > 0])} new, "
+          f"{len([v for v in per_index.values() if v == 0])} preexisting).")
 
     if sentinel_dir:
-        _write_sentinel(sentinel_dir, wall, per_table, probe_before, probe_after)
+        _write_sentinel(sentinel_dir, wall, per_index, probe_before, probe_after)
         print(f"Sentinel: {_sentinel_path(sentinel_dir)}")
 
     return 0

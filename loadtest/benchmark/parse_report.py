@@ -33,7 +33,7 @@ from loadtest.benchmark.cell_summary import (  # noqa: E402
     USE_OK_ONLY,
     _workload_summary,
 )
-from loadtest.report import parse_jsonl  # noqa: E402
+from loadtest.report import disk_used_bytes, parse_jsonl  # noqa: E402
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -112,7 +112,8 @@ def discover_checkpoints(run_dir: pathlib.Path) -> list[int]:
 
 def _evidence_for_workload(cell_dir: pathlib.Path, checkpoint: int,
                            ran_at: str, jsonl_name: str,
-                           use_ok_only: bool) -> dict | None:
+                           use_ok_only: bool,
+                           server_id: str) -> dict | None:
     """Build one evidence row from crud.jsonl or search.jsonl.
 
     Delegates percentile/trust math to `cell_summary._workload_summary` so
@@ -141,6 +142,9 @@ def _evidence_for_workload(cell_dir: pathlib.Path, checkpoint: int,
         "ran_at":       ran_at,
         "per_verb":     summary["per_verb"],
     }
+    db_bytes = disk_used_bytes(cell_dir / "disk.json", server_id)
+    if db_bytes is not None:
+        row["db_size_bytes"] = db_bytes
     # Carry phase accounting into benchmark.json for CRUD cells so
     # downstream renderers can surface reliability flags per verb.
     phases_path = cell_dir / "crud_phases.json"
@@ -201,6 +205,7 @@ def build_cells(run_dir: pathlib.Path,
                 row = _evidence_for_workload(
                     cell_dir, ckpt, ran_at,
                     WORKLOAD_JSONL[pid], USE_OK_ONLY[pid],
+                    sid,
                 )
                 if row is None:
                     continue

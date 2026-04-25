@@ -11,10 +11,13 @@
 #      server is under test — contaminating p99 latency with loader-side noise
 #      and silently penalizing fast servers (HAPI/Aidbox) that drive the loader
 #      harder.
-#   3. Stock Postgres tuned to FHIR-workload appropriate values for hapi-db AND
-#      medplum-db. Aidbox ships its own preconfigured `aidboxdb` image; without
-#      tuning the others, we'd be comparing a tuned database to a default one.
-#      This removes that vendor-asymmetry from the headline numbers.
+#   3. Stock Postgres tuned to FHIR-workload appropriate values for every
+#      backing DB in the stack (hapi-db, medplum-db, aidbox-db, hfs-db). All
+#      four use stock postgres:16 or :18 with matching OLTP tuning so vendor
+#      critics can't claim a configuration asymmetry. (Pre-2026-04-24 this
+#      stack used the `healthsamurai/aidboxdb` image for Aidbox, which was
+#      deprecated ~12 months earlier; Health Samurai's own benchmark now uses
+#      stock postgres:18, and we follow suit.)
 #   4. Images pinned to sha256 digests captured on 2026-04-17 so Stage 1 and
 #      Stage 3 measure the same software three days apart.
 #
@@ -149,7 +152,39 @@ services:
     cpuset: "0-11,16-27"
 
   aidbox-db:
-    image: healthsamurai/aidboxdb@sha256:e59d1afa672dec0288ee1d5005599c61eac06f4ce9558a5cba02042ecacdedf7
+    # Stock postgres:18 + OLTP tuning parity with hapi-db / medplum-db / hfs-db
+    # (all other backing DBs in this stack use identical tuning). Health
+    # Samurai's benchmark runs Aidbox on stock postgres:17/:18 with pg_tune-class
+    # values; we match.
+    image: postgres:18
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "shared_buffers=8GB"
+      - "-c"
+      - "effective_cache_size=24GB"
+      - "-c"
+      - "work_mem=64MB"
+      - "-c"
+      - "maintenance_work_mem=2GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=8"
+      - "-c"
+      - "max_parallel_workers_per_gather=4"
+      - "-c"
+      - "max_parallel_workers=8"
+      - "-c"
+      - "wal_compression=on"
     cpus: 6.0
     mem_limit: 32g
     cpuset: "0-11,16-27"

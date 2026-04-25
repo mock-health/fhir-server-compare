@@ -70,12 +70,26 @@ For the search profile the headline uses the **ok-only** percentile stream: late
 
 CRUD and Search workloads run a 30-second untimed warmup before the measurement window opens. JVM JIT (HAPI, Blaze), query planner caches (Postgres, Aidbox), and index warmth (MongoDB, Elasticsearch) all benefit. Ingest has no warmup because the first-write path is a real user experience.
 
+## Vendor-recommended configuration
+
+Each server in the roster runs with the configuration its own vendor documents (or benchmarks against). Leaving a vendor on a default that their documentation explicitly recommends against would measure "did the image ship the right knob flipped?" rather than "how fast is the engine?" — so we flip the knobs the vendor tells us to. Every such knob is listed here and in the compose file.
+
+| Server | Setting | Source |
+|---|---|---|
+| **MS FHIR** | `x-bundle-processing-logic: parallel` request header on ingest | [Azure FHIR best-practices docs](https://learn.microsoft.com/en-us/azure/healthcare-apis/fhir/fhir-best-practices) |
+| **Aidbox** | `BOX_FHIR_SEARCH_DEFAULT_PARAMS_TOTAL=none` (disable implicit `_total=accurate`) | [Health Samurai benchmark config](https://github.com/HealthSamurai/fhir-server-performance-benchmark/blob/main/ci_search_suite.yaml) |
+| **Aidbox** | Full index set (pg_trgm + GIN `jsonb_path_ops` on 11 tables + Patient name trigram + birthdate btree) | [HealthSamurai `initbundle.json`](https://github.com/HealthSamurai/fhir-server-performance-benchmark/blob/main/infra/aidbox/initbundle.json) |
+| **Aidbox** | Anonymous `AccessPolicy` installed via `BOX_INIT_BUNDLE` | Same pattern as upstream benchmark |
+| **Spark** | Write-path + read-path Mongo indexes (see next section) | Authored locally by matching Spark's query patterns; no vendor doc exists |
+
+Queries that want to pay the `_total=accurate` tax request it explicitly in the URL (e.g. `observation_search_total_accurate` in `benchmark/profiles/search.yaml`) — a URL-level parameter overrides the server default, so the "what does an accurate total cost?" measurement is still honest.
+
 ## Server-specific index bootstrap (Aidbox, Spark)
 
 Two servers require an operator to create the backing search indexes manually. Leaving them unindexed would measure "did the vendor ship indexes?" rather than "how fast is the engine once it's configured like an operator would run it in prod?" — a distinction the benchmark makes explicitly rather than hiding.
 
 - **Aidbox** (community edition 2603) ships every per-resource Postgres table with only a primary-key index. Every FHIR search translates to `WHERE resource @> '<jsonb>'`, so without a GIN index on the `resource` column each query is a `Seq Scan` across the full table — 12 s per query on a 63 K-patient corpus, climbing to timeouts at 64 K. Reproducible via `EXPLAIN` against any aidbox install of that version.
-  - **Bootstrap step:** `loadtest/aidbox_bootstrap.py` runs during ramp, after `docker compose up aidbox` + wait-healthy and before bundle ingest. It issues one `CREATE INDEX IF NOT EXISTS <table>_resource_gin_path ON <table> USING gin (resource jsonb_path_ops)` per resource table the benchmark queries (`patient`, `observation`, `condition`, `procedure`, `encounter`, `medicationrequest`) via aidbox's documented `/$sql` admin endpoint. Idempotent; sentinel at `<run>/aidbox_indexed.json`.
+  - **Bootstrap step:** `loadtest/aidbox_bootstrap.py` runs during ramp, after `docker compose up aidbox` + wait-healthy and before bundle ingest. The index set is a verbatim port from Health Samurai's own benchmark — [HealthSamurai/fhir-server-performance-benchmark/infra/aidbox/initbundle.json](https://github.com/HealthSamurai/fhir-server-performance-benchmark/blob/main/infra/aidbox/initbundle.json) plus the refinements in [`ci_search_suite.yaml`](https://github.com/HealthSamurai/fhir-server-performance-benchmark/blob/main/ci_search_suite.yaml) — so the benchmark measures Aidbox against Aidbox's own recommended configuration, not against our guess at one. Nineteen statements in total: `pg_trgm` extension + GIN(`resource jsonb_path_ops`) on 11 resource tables + 4 Patient name indexes (trigram + plain via Aidbox's `aidbox_text_search`/`knife_extract_text`) + 3 Patient birthdate btree indexes (min/max/compound via `knife_extract_min_timestamptz`/`knife_extract_max_timestamptz`). Applied via Aidbox's documented `/$sql` admin endpoint; idempotent; sentinel at `<run>/aidbox_indexed.json`.
   - Creating the indexes on empty tables is instant. Postgres maintains them automatically as ingest writes rows — the same steady-state behavior HAPI/Medplum/MS FHIR get for free from their ORMs' schema management.
   - **Finding (reported separately on `/performance`):** default-config aidbox search p90 at 64 K is ~56 s with 94 % error rate; with the bootstrap applied it drops ≥1,000×. The out-of-box number is the default-config reality; the bootstrapped number is the engine's real capability. Both are published.
 - **Spark** uses MongoDB, which ships without either write-path or read-path indexes on the schema Spark creates. `spark-mongo-init/01-create-indexes.js` is bind-mounted into the container's `docker-entrypoint-initdb.d` so MongoDB auto-creates them on first startup of a fresh volume. Two index sets:

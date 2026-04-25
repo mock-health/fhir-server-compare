@@ -112,7 +112,8 @@ def collect_image_digests() -> dict:
     images = [
         "hapiproject/hapi",
         "healthsamurai/aidboxone",
-        "healthsamurai/aidboxdb",
+        # healthsamurai/aidboxdb retired ~2025-04 in favor of stock postgres;
+        # Aidbox's own benchmark uses stock postgres:18, and we do too.
         "medplum/medplum-server",
         "medplum/medplum-app",
         "mcr.microsoft.com/healthcareapis/r4-fhir-server",

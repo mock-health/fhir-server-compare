@@ -48,6 +48,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from loadtest import generate, loader, workload_crud, workload_search  # noqa: E402
+from loadtest import k6_driver  # noqa: E402
 from loadtest.host_meta import write_meta  # noqa: E402
 from loadtest.resources import ResourceSampler, snapshot_disk  # noqa: E402
 from loadtest.stage import SERVER_CONTAINERS  # noqa: E402
@@ -282,6 +283,7 @@ def run_one_server(
     results_root: Path,
     crud_phase_caps: dict[str, tuple[int, float]],
     crud_prewarm_per_template: int,
+    workload_harness: str = "python",
 ) -> None:
     """Reset+boot this server ONCE, then ingest the delta at each checkpoint."""
     run_dir = results_root / run_id
@@ -327,6 +329,23 @@ def run_one_server(
                       f"server reports {realized_before} patients; using actual count")
             offset = realized_before
             delta = checkpoint - offset
+
+            # If we just did a cold reset, the volume is empty but a prior
+            # (failed) run may have left ingest.jsonl / cell artifacts here.
+            # The loader's idempotency cache reads ingest.jsonl to decide
+            # what to skip — stale entries + empty DB would skip every
+            # POST and leave the server with 0 patients. Clear the cell
+            # artifacts so this run is an honest cold start.
+            if cold_start and realized_before == 0:
+                for stale in ("ingest.jsonl", "crud.jsonl", "search.jsonl",
+                              "warmup.jsonl", "crud_prewarm.jsonl",
+                              "crud_phases.json", "cell_summary.json",
+                              "fairness.json", "k6_crud.ndjson",
+                              "k6_search.ndjson", "resources.csv",
+                              "disk.json"):
+                    p = server_dir / stale
+                    if p.exists():
+                        p.unlink()
 
             cell_banner = (f"----- {server_id} | checkpoint {checkpoint} "
                            f"(have {realized_before}, +{max(0, delta)} new) -----")
@@ -379,7 +398,10 @@ def run_one_server(
                 # Warmup every checkpoint: DB state has changed (2x the rows),
                 # query plans may recompile, caches need re-seeding. HAPI JIT
                 # is already warm after the first one but Postgres plan cache
-                # is not — keep it.
+                # is not — keep it. Warmup is always the Python mix-mode CRUD
+                # driver regardless of the measurement harness: it doesn't
+                # feed any published metric and reusing one warmer keeps the
+                # thermal conditions identical across harnesses.
                 print(f"  [warmup] 30s {server_id} warmup before timed phase")
                 workload_crud.run(
                     server_id=server_id, servers_path=servers_file,
@@ -388,32 +410,45 @@ def run_one_server(
                     mix_spec="C:10,R:60,U:25,D:5",
                 )
 
-                # Search runs BEFORE CRUD so it measures the post-ingest
-                # steady state, not a state mutated by 50K creates/deletes
-                # from the CRUD phase.
-                workload_search.run(
-                    server_id=server_id, servers_path=servers_file, queries_path=queries_file,
-                    log_path=server_dir / "search.jsonl",
-                    duration=workload_duration, workers=workers_workload,
-                    exclude={"patient_export"},
-                )
-                # Phased CRUD: per-verb timed phases, each capped at
-                # min(sample_cap, duration_cap). Produces enough samples
-                # per verb per cell for p90/p99 with ±5% CI on every
-                # "reliable"-flagged cell. See crud_phases.json for per-phase
-                # accounting (samples, elapsed_ms, stop_reason).
-                phase_summaries = workload_crud.run(
-                    server_id=server_id, servers_path=servers_file,
-                    log_path=server_dir / "crud.jsonl",
-                    duration=0.0, workers=workers_workload, mix_spec="",
-                    phased=True, phase_caps=crud_phase_caps,
-                    prewarm_per_template=crud_prewarm_per_template,
-                    prewarm_log_path=server_dir / "crud_prewarm.jsonl",
-                )
-                if isinstance(phase_summaries, list):
-                    (server_dir / "crud_phases.json").write_text(
-                        json.dumps(phase_summaries, indent=2)
+                if workload_harness == "k6":
+                    # K6 harness: run CRUD + Search back-to-back via k6, then
+                    # convert the raw NDJSON into crud.jsonl / search.jsonl in
+                    # the same shape the Python drivers would have produced.
+                    # cell_summary.py / parse_report.py are harness-agnostic
+                    # — they just read the JSONLs. No crud_phases.json because
+                    # k6 runs mix-mode CRUD, not phased C→U→R→V→D.
+                    k6_driver.run_workloads(
+                        server_id=server_id,
+                        server_dir=server_dir,
+                        workload_duration=workload_duration,
                     )
+                else:
+                    # Python harness (default). Search runs BEFORE CRUD so it
+                    # measures the post-ingest steady state, not a state
+                    # mutated by 50K creates/deletes from the CRUD phase.
+                    workload_search.run(
+                        server_id=server_id, servers_path=servers_file, queries_path=queries_file,
+                        log_path=server_dir / "search.jsonl",
+                        duration=workload_duration, workers=workers_workload,
+                        exclude={"patient_export"},
+                    )
+                    # Phased CRUD: per-verb timed phases, each capped at
+                    # min(sample_cap, duration_cap). Produces enough samples
+                    # per verb per cell for p90/p99 with ±5% CI on every
+                    # "reliable"-flagged cell. See crud_phases.json for
+                    # per-phase accounting (samples, elapsed_ms, stop_reason).
+                    phase_summaries = workload_crud.run(
+                        server_id=server_id, servers_path=servers_file,
+                        log_path=server_dir / "crud.jsonl",
+                        duration=0.0, workers=workers_workload, mix_spec="",
+                        phased=True, phase_caps=crud_phase_caps,
+                        prewarm_per_template=crud_prewarm_per_template,
+                        prewarm_log_path=server_dir / "crud_prewarm.jsonl",
+                    )
+                    if isinstance(phase_summaries, list):
+                        (server_dir / "crud_phases.json").write_text(
+                            json.dumps(phase_summaries, indent=2)
+                        )
 
             snapshot_disk(server_dir / "disk.json")
             (server_dir / "cell_complete.json").write_text(json.dumps({
@@ -476,9 +511,11 @@ def run_ramp(
     crud_time_cap_s: float = DEFAULT_CRUD_TIME_CAP_S,
     crud_r_time_cap_s: float = DEFAULT_CRUD_R_TIME_CAP_S,
     crud_prewarm_per_template: int = DEFAULT_CRUD_PREWARM_PER_TEMPLATE,
+    workload_harness: str = "python",
 ) -> int:
     checkpoints = tuple(sorted(set(checkpoints)))
-    print(f"\nRAMP: checkpoints={list(checkpoints)} servers={list(servers)} run_id={run_id}")
+    print(f"\nRAMP: checkpoints={list(checkpoints)} servers={list(servers)} "
+          f"run_id={run_id} harness={workload_harness}")
 
     # Capture host metadata once at run start. Methodology rigor — anyone
     # reproducing this needs to know the kernel, governor, THP setting, and
@@ -522,6 +559,7 @@ def run_ramp(
             results_root=results_root,
             crud_phase_caps=crud_phase_caps,
             crud_prewarm_per_template=crud_prewarm_per_template,
+            workload_harness=workload_harness,
         )
 
     elapsed = (time.monotonic() - t_total) / 60.0
@@ -561,6 +599,14 @@ def main() -> int:
                     help="Prewarm each of the 6 U templates with this many ops "
                          "before the timed U phase (writes to crud_prewarm.jsonl, "
                          "not included in percentiles). Set to 0 to disable.")
+    ap.add_argument("--workload-harness", choices=("python", "k6"), default="python",
+                    help="Which harness drives the timed CRUD + Search phase. "
+                         "python (default) = phased CRUD + per-verb breakouts via "
+                         "the Python thread-pool drivers. k6 = grafana/k6 container, "
+                         "mix-mode CRUD (no phased C/U/R/V/D), raw NDJSON converted "
+                         "into the same crud.jsonl / search.jsonl shape. Warmup is "
+                         "always Python regardless of this flag so thermal conditions "
+                         "match across harnesses.")
     args = ap.parse_args()
     servers = tuple(s.strip() for s in args.servers.split(",") if s.strip())
     for s in servers:
@@ -585,6 +631,7 @@ def main() -> int:
         crud_time_cap_s=args.crud_time_cap_seconds,
         crud_r_time_cap_s=args.crud_r_time_cap_seconds,
         crud_prewarm_per_template=args.crud_prewarm_per_template,
+        workload_harness=args.workload_harness,
     )
 
 
