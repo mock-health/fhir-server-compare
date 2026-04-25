@@ -35,3 +35,6 @@ data/loadtest/
 # Local Synthea checkout that loadtest/generate.py clones+builds
 synthea/
 .gstack/
+*.egg-info/
+build/
+dist/
