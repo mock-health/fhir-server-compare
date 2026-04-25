@@ -19,7 +19,7 @@
 #   docker inspect --format '{{range .RepoDigests}}{{.}}{{"\n"}}{{end}}' <image>:<tag>
 # and update the digest below.
 #
-# Ports (match defaults in servers.yaml):
+# Ports (match defaults in config/servers.yaml):
 #   8080 — HAPI
 #   8103 — Medplum server
 #   8081 — Microsoft FHIR Server
@@ -80,7 +80,7 @@ services:
       # AccessPolicy + Client bundle — applied by Aidbox at first boot via
       # BOX_INIT_BUNDLE. Not load-bearing for the current Basic-via-proxy
       # path, but pre-wires the resources needed for a proxy-less cutover.
-      - ./conformance-docker/aidbox-init/initbundle.json:/tmp/initbundle.json:ro
+      - ./docker/conformance-services/aidbox-init/initbundle.json:/tmp/initbundle.json:ro
     environment:
       AIDBOX_LICENSE: "${AIDBOX_LICENSE:-}"
       AIDBOX_CLIENT_ID: "${AIDBOX_CLIENT_ID:-basic-client}"
@@ -98,7 +98,7 @@ services:
       # Computing the total count is a COUNT(*) over the filtered result set
       # and is the dominant cost for many Aidbox search queries. Queries that
       # *do* want an accurate total request it explicitly in the URL
-      # (e.g. observation_search_total_accurate in benchmark/profiles/search.yaml).
+      # (e.g. observation_search_total_accurate in profiles/benchmark/search.yaml).
       BOX_FHIR_SEARCH_DEFAULT_PARAMS_TOTAL: none
       BOX_INIT_BUNDLE: file:///tmp/initbundle.json
     restart: unless-stopped
@@ -145,10 +145,11 @@ services:
     ports:
       - "8103:8103"
     volumes:
-      # Medplum expects medplum.config.json in its working directory; env-var
+      # Medplum expects medplum.config.json in its working directory (mounted
+      # from config/medplum.config.json); env-var
       # config alone is not supported for this version. The file lives at
       # repo root and is bind-mounted read-only.
-      - ./medplum.config.json:/usr/src/medplum/medplum.config.json:ro
+      - ./config/medplum.config.json:/usr/src/medplum/medplum.config.json:ro
     restart: unless-stopped
 
   medplum-db:
@@ -265,8 +266,8 @@ services:
       # under /docker-entrypoint-initdb.d/ on the FIRST startup of a fresh
       # data volume. We mount our index-creation script there so any fresh
       # `make loadtest-reset-one SERVER=spark` produces a properly-indexed DB.
-      # See spark-mongo-init/01-create-indexes.js for the rationale.
-      - ./spark-mongo-init:/docker-entrypoint-initdb.d:ro
+      # See docker/spark-mongo-init/01-create-indexes.js for the rationale.
+      - ./docker/spark-mongo-init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
 
 volumes:

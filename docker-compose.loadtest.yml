@@ -53,7 +53,7 @@ x-medplum-server: &medplum_server
     medplum-redis:
       condition: service_healthy
   volumes:
-    - ./medplum.config.json:/usr/src/medplum/medplum.config.json:ro
+    - ./config/medplum.config.json:/usr/src/medplum/medplum.config.json:ro
   cpus: 2.5
   mem_limit: 28g
   cpuset: "0-11,16-27"
@@ -220,7 +220,7 @@ services:
     ports:
       - "8103:8103"
     volumes:
-      - ./medplum-lb.conf:/etc/nginx/nginx.conf:ro
+      - ./config/medplum-lb.conf:/etc/nginx/nginx.conf:ro
     cpus: 2.0
     mem_limit: 1g
     cpuset: "0-11,16-27"
