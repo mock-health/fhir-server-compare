@@ -137,15 +137,15 @@ Every published round contains **both** a conformance matrix (does the server im
 
 A round id like `2026-q2-r000` decomposes as: `<year>-q<quarter>-r<NNN>` (zero-padded). The first official round of Q2 2026 is `r000`; corrections or re-runs increment to `r001`, `r002`, etc. The original is never overwritten.
 
-## Two harnesses, one shape
+## The k6 workload harness
 
-The performance matrix can be driven by either a Python harness (the original) or a Grafana k6 harness (in-flight, see `ROADMAP.md`). Both produce the same `crud.jsonl` / `search.jsonl` shape that `fhirbench.benchmark.parse_report` understands, so the round artifact flow is harness-agnostic. The choice is `--workload-harness=python|k6` on `fhirbench.harness.ramp`.
+The timed CRUD + Search phase runs in [Grafana k6](https://k6.io/) inside a docker container. `fhirbench.harness.ramp` owns the per-server lifecycle (reset → boot → wait healthy → bootstrap → ingest → workloads → cell_complete → stop) and invokes k6 per workload via `fhirbench.harness.k6_driver`. The k6 scripts live under `src/fhirbench/k6/`; a Python context emitter (`fhirbench.cli.emit_k6_context`) resolves `config/servers.yaml` + `config/queries.yaml` + env vars in one place so k6 never sees YAML, and a post-processor (`fhirbench.k6.postprocess`) reshapes the raw NDJSON into the `crud.jsonl` / `search.jsonl` shape the cell-summary + parse-report pipeline reads.
 
 ## Adding things
 
 - **A new server**: append-only change to `config/servers.yaml`, `docker-compose.yml`, `config/queries.yaml`, and `src/fhirbench/conformance/run.py`. See `CONTRIBUTING.md`.
 - **A new conformance TestScript**: drop a JSON file under `conformance/testscripts/<profile>/<bucket>/`. The runner picks it up automatically.
-- **A new benchmark workload**: extend `profiles/benchmark/<workload>.yaml` and the corresponding `fhirbench.harness.workload_<x>` module.
+- **A new benchmark workload**: add a k6 script under `src/fhirbench/k6/` that emits the same OpRecord JSONL shape; wire it into `fhirbench.harness.k6_driver.run_workloads`.
 - **A new methodology**: changes to scoring or measurement go through a 30-day public RFC. See `GOVERNANCE.md`.
 
 ## Why this shape

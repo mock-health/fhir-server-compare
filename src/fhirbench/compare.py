@@ -46,7 +46,8 @@ def load_queries(path: Path) -> list[dict]:
     The matrix:skip marker is the mirror of loadtest:skip — it keeps
     load-only queries (e.g., runtime-sampled ones with `{{placeholder}}`
     values that compare.py has no way to resolve) out of the behavior
-    matrix, while still letting workload_search.py fire them.
+    matrix, while still letting the k6 search workload (src/fhirbench/k6/search.js)
+    fire them.
     """
     try:
         import yaml  # type: ignore

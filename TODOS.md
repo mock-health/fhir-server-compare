@@ -22,11 +22,11 @@ Deferred work captured during the `src/fhirbench/` refactor review (2026-04-24).
 
 ## Full unit test coverage of harness modules
 
-**What:** Add pytest suites for `fhirbench.harness.loader`, `fhirbench.harness.workload_crud`, `fhirbench.harness.workload_search`, `fhirbench.harness.stage`, `fhirbench.harness.metrics`, `fhirbench.harness.sample_pool`. The refactor PR ships only 3 starter suites (`test_servers.py`, `test_parse_report.py`, `test_runner.py`).
+**What:** Add pytest suites for `fhirbench.harness.loader`, `fhirbench.harness.metrics`, `fhirbench.harness.k6_driver`, `fhirbench.k6.postprocess`. The refactor PR ships only 3 starter suites (`test_servers.py`, `test_parse_report.py`, `test_runner.py`).
 
 **Why:** Public benchmark repo credibility. Catches regressions in the load-bearing modules. Currently the only safety net is manual `make loadtest-dryrun`.
 
-**Pros:** Protects the most fragile code paths (HTTP workloads, stage orchestration, sample pool). Sets a bar for contributors.
+**Pros:** Protects the most fragile code paths (HTTP ingest, k6 driver, NDJSON post-processing). Sets a bar for contributors.
 
 **Cons:** Each module has significant I/O (HTTP, subprocess, Docker stats, file I/O). Needs mocking scaffolding (responses or requests-mock, test doubles for docker stats). Estimated 2-3 days of CC work.
 

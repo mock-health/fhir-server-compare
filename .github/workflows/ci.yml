@@ -53,11 +53,11 @@ jobs:
         # (covered separately in the `compose` job below to keep matrix lean).
         run: |
           python -c "from fhirbench import servers, compare, load_bundle"
-          python -c "from fhirbench.harness import ramp, stage, loader, workload_crud, workload_search"
+          python -c "from fhirbench.harness import ramp, k6_driver, loader, generate, metrics, report"
           python -c "from fhirbench.benchmark import parse_report"
           python -c "from fhirbench.conformance import runner, run"
           python -c "from fhirbench.publish import copy_to_studio, badges"
-          python -c "from fhirbench.cli import compare_harnesses, emit_k6_context, fetch_server_versions"
+          python -c "from fhirbench.cli import emit_k6_context, fetch_server_versions"
           python -m fhirbench.harness.ramp --help > /dev/null
           python -m fhirbench.compare --help > /dev/null
           python -m fhirbench.publish.copy_to_studio --help > /dev/null

@@ -38,8 +38,8 @@
 #   body:             request body (POST only)
 #   loadtest:         "include" (default) or "skip:<reason>". Behavior matrix
 #                     (compare.py) runs ALL queries — that's how we document
-#                     "what each server supports." The load-test workload
-#                     (workload_search.py) only fires queries marked
+#                     "what each server supports." The k6 search workload
+#                     (src/fhirbench/k6/search.js) only fires queries marked
 #                     loadtest=include so the headline ops/s and p99 numbers
 #                     measure SPEED of supported queries, not RE-DOCUMENT
 #                     known support gaps under load. Drop reasons:
@@ -62,14 +62,15 @@
 #                         refs resolved per-request from a SamplePool;
 #                         compare.py has no way to fill them, so skip.
 #   sample:           Optional map of `placeholder_name: pool_name`. At load
-#                     time, workload_search.py expands `{{placeholder_name}}`
-#                     in path + param values by drawing a fresh random value
-#                     from the named pool. Pool names are defined in
-#                     loadtest/sample_pool.py: patient_id, patient_family,
-#                     patient_given, condition_code, procedure_code,
-#                     medication_code, practitioner_id, location_id.
-#                     Values in pools are pre-formatted as 'system|code'
-#                     (tokens) or raw ids (references), ready to drop in.
+#                     time, src/fhirbench/k6/search.js expands
+#                     `{{placeholder_name}}` in path + param values by drawing
+#                     a fresh random value from the named pool. Pool names
+#                     are defined in src/fhirbench/k6/lib/harvest.js:
+#                     patient_id, patient_family, patient_given,
+#                     condition_code, procedure_code, medication_code,
+#                     practitioner_id, location_id. Values in pools are
+#                     pre-formatted as 'system|code' (tokens) or raw ids
+#                     (references), ready to drop in.
 #   expected_hapi:    what HAPI returns (free text)
 #   expected_aidbox:  what Aidbox returns (free text; "?" = not yet observed)
 #   expected_medplum: what Medplum returns (free text; "?" = not yet observed)
@@ -362,8 +363,8 @@ queries:
   # Runtime-sampled search queries (load-only).
   #
   # These queries contain `{{placeholder}}` values resolved per-request
-  # by loadtest/sample_pool.py, which harvests realistic parameter values
-  # from the live server before the timed workload starts. They are
+  # by src/fhirbench/k6/lib/harvest.js, which harvests realistic parameter
+  # values from the live server before the timed workload starts. They are
   # excluded from the behavior matrix (matrix: skip:runtime_sampled)
   # because compare.py has no stable expected_* to compare against once
   # values come from live data. Their job is to exercise the common

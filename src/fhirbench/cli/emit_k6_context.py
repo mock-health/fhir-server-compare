@@ -99,10 +99,10 @@ def _auth_headers_for(server: dict, client: httpx.Client) -> dict[str, str]:
 def _load_queries(queries_path: Path, workload: str) -> list[dict]:
     """Return queries that participate in the given workload.
 
-    Mirrors load_queries() in workload_search.py: filters out
+    Mirrors load_queries() in fhirbench.compare: filters out
     `loadtest: skip:*`. For the CRUD workload we don't need queries at all
-    (the op templates are hard-coded), but we still emit the list unfiltered
-    so the same context file is reusable.
+    (the op templates are hard-coded in src/fhirbench/k6/crud.js), but we
+    still emit the list unfiltered so the same context file is reusable.
     """
     import yaml  # type: ignore
     data = yaml.safe_load(queries_path.read_text()) or {}

@@ -34,29 +34,29 @@ fhirbench-ramp --run-id r1 ...
 | `load_bundle.py` | `src/fhirbench/load_bundle.py` |
 | `loadtest/__init__.py` | `src/fhirbench/harness/__init__.py` |
 | `loadtest/ramp.py` | `src/fhirbench/harness/ramp.py` |
-| `loadtest/stage.py` | `src/fhirbench/harness/stage.py` |
 | `loadtest/loader.py` | `src/fhirbench/harness/loader.py` |
 | `loadtest/metrics.py` | `src/fhirbench/harness/metrics.py` |
 | `loadtest/resources.py` | `src/fhirbench/harness/resources.py` |
-| `loadtest/sample_pool.py` | `src/fhirbench/harness/sample_pool.py` |
 | `loadtest/wait_healthy.py` | `src/fhirbench/harness/wait_healthy.py` |
-| `loadtest/workload_crud.py` | `src/fhirbench/harness/workload_crud.py` |
-| `loadtest/workload_search.py` | `src/fhirbench/harness/workload_search.py` |
 | `loadtest/host_meta.py` | `src/fhirbench/harness/host_meta.py` |
 | `loadtest/report.py` | `src/fhirbench/harness/report.py` |
 | `loadtest/aidbox_bootstrap.py` | `src/fhirbench/harness/aidbox_bootstrap.py` |
 | `loadtest/bootstrap_medplum.py` | `src/fhirbench/harness/bootstrap_medplum.py` |
 | `loadtest/generate.py` | `src/fhirbench/harness/generate.py` |
-| `loadtest/update_templates.py` | `src/fhirbench/harness/update_templates.py` |
 | `loadtest/k6_driver.py` | `src/fhirbench/harness/k6_driver.py` |
 | `loadtest/benchmark/*.py` | `src/fhirbench/benchmark/*.py` |
 | `loadtest/conformance/*.py` | `src/fhirbench/conformance/*.py` |
 | `loadtest/publish/*.py` | `src/fhirbench/publish/*.py` |
 | `loadtest/k6/*.{js,py,json}` | `src/fhirbench/k6/*.{js,py,json}` |
-| `scripts/compare_harnesses.py` | `src/fhirbench/cli/compare_harnesses.py` |
 | `scripts/emit_k6_context.py` | `src/fhirbench/cli/emit_k6_context.py` |
 | `scripts/fetch_server_versions.py` | `src/fhirbench/cli/fetch_server_versions.py` |
 | `scripts/setup-host.sh` | `scripts/setup-host.sh` (unchanged — shell tooling) |
+| `loadtest/stage.py` | **deleted** — `ramp.py` superseded the staged-ingest workflow |
+| `loadtest/sample_pool.py` | **deleted** — k6 has its own port at `src/fhirbench/k6/lib/harvest.js` |
+| `loadtest/workload_crud.py` | **deleted** — k6 `crud.js` is the only CRUD driver |
+| `loadtest/workload_search.py` | **deleted** — k6 `search.js` is the only search driver |
+| `loadtest/update_templates.py` | **deleted** — was Python CRUD U-template helper, no longer needed |
+| `scripts/compare_harnesses.py` | **deleted** — shadow-run validator from the python→k6 cutover, no longer needed |
 
 ### Configs and data
 
