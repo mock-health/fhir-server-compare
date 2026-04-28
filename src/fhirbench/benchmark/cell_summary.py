@@ -2,7 +2,7 @@
 
 Reads crud.jsonl / search.jsonl from a cell directory and emits a compact
 `cell_summary.json` next to `cell_complete.json`. Same percentile math as
-`parse_report.py` (both go through `loadtest.report.workload_metrics`) so
+`parse_report.py` (both go through `fhirbench.harness.report.workload_metrics`) so
 the round artifact and the per-cell file never disagree.
 
 The summary is the "three-number honest publication" shape — p50, err-rate,

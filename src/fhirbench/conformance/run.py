@@ -234,7 +234,7 @@ def main() -> None:
 
         with log_path.open("w") as logf:
             r = subprocess.run(
-                [sys.executable, "-m", "loadtest.conformance.runner",
+                [sys.executable, "-m", "fhirbench.conformance.runner",
                  "--server", sid,
                  "--testscripts", str(testscripts_dir),
                  "--testreport-dir", str(out_dir)],

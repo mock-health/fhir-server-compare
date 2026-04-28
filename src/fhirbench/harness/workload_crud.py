@@ -226,7 +226,7 @@ def do_update(
     """Read-modify-write counted as a single op (two HTTP calls).
 
     The modify step picks one of six templates uniformly (see
-    loadtest.update_templates). Half touch search indexes
+    fhirbench.harness.update_templates). Half touch search indexes
     (name_given / address_city / active_toggle), half don't
     (meta_tag / meta_security / telecom_phone), so per-template p99
     slices surface servers that reindex on field edits.

@@ -43,6 +43,12 @@ export const options = {
       gracefulStop: '30s',
     },
   },
+  // setup() paginates Patient ids (_count=200) and then runs ~7 more
+  // sample-pool harvests. At 64K+ patients that's 300+ sequential GETs;
+  // k6's default 60s setupTimeout trips well before the harness is done.
+  // Match the per-page timeout budget in lib/harvest.js (300s/page) with
+  // a generous total cap so a true server stall still surfaces.
+  setupTimeout: '30m',
   noConnectionReuse: false,
   summaryTrendStats: ['min', 'med', 'avg', 'max', 'p(90)', 'p(95)', 'p(99)'],
   // NOTE: intentionally NOT setting `discardResponseBodies: true`. That

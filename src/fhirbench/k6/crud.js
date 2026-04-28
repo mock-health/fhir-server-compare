@@ -59,6 +59,10 @@ export const options = {
   // (buildTrust in lib/trust.js) so it's consistent with the Python
   // harness. A k6 threshold would have made this cell a pass/fail, which
   // isn't the model.
+  // setup() paginates Patient ids (_count=200); at 64K+ patients that's
+  // 300+ sequential GETs and k6's default 60s setupTimeout trips well
+  // before harvest finishes. Matches the cap in search.js.
+  setupTimeout: '30m',
   noConnectionReuse: false,
   summaryTrendStats: ['min', 'med', 'avg', 'max', 'p(90)', 'p(95)', 'p(99)'],
   discardResponseBodies: false,  // we need resp.json() for create ids
