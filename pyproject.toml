@@ -23,6 +23,8 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 dependencies = [
+  "httpx",
+  "jsonschema",
   "pyyaml",
   "requests",
 ]
