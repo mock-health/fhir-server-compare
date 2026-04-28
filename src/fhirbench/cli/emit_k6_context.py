@@ -38,9 +38,9 @@ Why pre-mint auth headers here:
     simpler and mirrors the Python harness's once-per-session token.
 
 Usage:
-  python -m scripts.emit_k6_context --server all --workload search \\
+  python -m fhirbench.cli.emit_k6_context --server all --workload search \\
       --out loadtest/k6/k6_context.json
-  python -m scripts.emit_k6_context --server aidbox --workload crud \\
+  python -m fhirbench.cli.emit_k6_context --server aidbox --workload crud \\
       --out /tmp/k6_ctx.json
 """
 from __future__ import annotations

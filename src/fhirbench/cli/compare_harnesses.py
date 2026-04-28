@@ -14,12 +14,12 @@ Drives step 5 of the k6-port plan:
 
     Any red cell blocks cutover. The intended workflow is:
       1. Run both harnesses.
-      2. `python -m scripts.compare_harnesses --python <id-a> --k6 <id-b>`.
+      2. `python -m fhirbench.cli.compare_harnesses --python <id-a> --k6 <id-b>`.
       3. Eyeball the report. If any red, investigate before flipping the
          default in Makefile.
 
 Usage:
-  python -m scripts.compare_harnesses \\
+  python -m fhirbench.cli.compare_harnesses \\
       --python results/rounds/2026-q2-r100/benchmark.json \\
       --k6     results/rounds/2026-q2-r101/benchmark.json
   # Non-zero exit if any cell is red.

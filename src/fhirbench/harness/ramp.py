@@ -198,7 +198,7 @@ def wait_healthy(server_id: str, timeout_s: float = 300.0) -> None:
     # Reuse the wait_healthy module (no-auth for medplum since bootstrap
     # hasn't run on a fresh volume).
     py = sys.executable
-    cmd = [py, "-m", "loadtest.wait_healthy", "--server", server_id,
+    cmd = [py, "-m", "fhirbench.harness.wait_healthy", "--server", server_id,
            "--timeout", str(timeout_s)]
     if server_id == "medplum":
         cmd.append("--no-auth")
@@ -207,7 +207,7 @@ def wait_healthy(server_id: str, timeout_s: float = 300.0) -> None:
 
 def bootstrap_medplum() -> None:
     py = sys.executable
-    _run([py, "-m", "loadtest.bootstrap_medplum"])
+    _run([py, "-m", "fhirbench.harness.bootstrap_medplum"])
     # bootstrap_medplum runs in a subprocess and rewrites .env in place, but
     # our own os.environ still holds whatever values we inherited at startup.
     # loader.run -> load_servers -> env interpolation reads os.environ, so
@@ -227,7 +227,7 @@ def bootstrap_aidbox(run_dir: Path) -> None:
     indexes automatically as ingest writes rows. Idempotent via an
     aidbox_indexed.json sentinel keyed off the DDL set hash."""
     py = sys.executable
-    _run([py, "-m", "loadtest.aidbox_bootstrap",
+    _run([py, "-m", "fhirbench.harness.aidbox_bootstrap",
           "--sentinel-dir", str(run_dir)])
 
 
@@ -389,19 +389,18 @@ def run_one_server(
                       f"({(realized/checkpoint)*100:.1f}%); this cell added +{loaded_this_cell}")
 
                 # Warmup every checkpoint: DB state has changed (2x the rows),
-                # query plans may recompile, caches need re-seeding. HAPI JIT
-                # is already warm after the first one but Postgres plan cache
-                # is not — keep it. Warmup is always the Python mix-mode CRUD
-                # driver regardless of the measurement harness: it doesn't
-                # feed any published metric and reusing one warmer keeps the
-                # thermal conditions identical across harnesses.
-                print(f"  [warmup] 30s {server_id} warmup before timed phase")
-                workload_crud.run(
-                    server_id=server_id, servers_path=servers_file,
-                    log_path=server_dir / "warmup.jsonl",
-                    duration=30.0, workers=max(8, workers_workload // 4),
-                    mix_spec="C:10,R:60,U:25,D:5",
-                )
+                # query plans may recompile, caches need re-seeding. Python
+                # harness only — k6 runs long enough (typically 15 min) that
+                # the plan-recompile transient is statistically irrelevant in
+                # the percentile windows.
+                if workload_harness != "k6":
+                    print(f"  [warmup] 30s {server_id} warmup before timed phase")
+                    workload_crud.run(
+                        server_id=server_id, servers_path=servers_file,
+                        log_path=server_dir / "warmup.jsonl",
+                        duration=30.0, workers=max(8, workers_workload // 4),
+                        mix_spec="C:10,R:60,U:25,D:5",
+                    )
 
                 if workload_harness == "k6":
                     # K6 harness: run CRUD + Search back-to-back via k6, then

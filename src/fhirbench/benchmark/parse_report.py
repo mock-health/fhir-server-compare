@@ -12,7 +12,7 @@ the p50 (median) at the largest checkpoint the server reached;
 as tail evidence but are not the headline — a 2-minute run produces too
 few samples on slow cells for p99 to be stable.
 
-Re-uses `loadtest.report.{ingest_metrics, workload_metrics, parse_jsonl}` so
+Re-uses `fhirbench.harness.report.{ingest_metrics, workload_metrics, parse_jsonl}` so
 the percentile math is identical to the markdown report. Benchmarks with no
 `cell_complete.json` sentinel are skipped.
 """

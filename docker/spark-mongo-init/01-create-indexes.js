@@ -27,6 +27,13 @@
 //   — Mongo slowlog showed COLLSCAN on searchindex per FHIR-search request.
 //   Added the read-path index set below. Same class of bootstrap problem as
 //   Aidbox's production-index setup; documented in methodology alongside it.
+// - 2026-04-27: Added `resources.internal_id_1` to cover the post-search
+//   resource-body fetch (after a `searchindex` hit, Spark looks up the full
+//   resource in `resources` keyed by `internal_id`; that field had no index).
+//   This is a structural completeness fix, not a fix for any specific cell —
+//   the spark/16K cell of ramp-50k that surfaced this gap was actually wedged
+//   by sustained 64-VU search load (67% client timeouts), which no index
+//   change addresses.
 //
 // IMPORTANT: This file only runs on the FIRST startup of a fresh volume.
 // To re-apply after schema changes, you must either:
@@ -62,6 +69,24 @@ db.resources.createIndex(
 );
 
 print("Created index: resources.typename_id_version_1");
+
+// resources.internal_id — post-search resource-body fetch.
+//
+// After a searchindex hit, Spark fetches the full resource from `resources`
+// keyed by `internal_id`. With no index here, every paginated search reads
+// against `resources` are COLLSCANs over a versioned collection that grows
+// with both patients and write churn (9.4M docs at the 16K-patient
+// checkpoint of ramp-50k).
+//
+// The aidbox bootstrap's analogue is the per-table primary key Postgres
+// gives Aidbox for free (every aidbox resource table is keyed by id), so
+// this index closes a gap that Spark otherwise leaves to a COLLSCAN.
+db.resources.createIndex(
+  { internal_id: 1 },
+  { name: 'internal_id_1' }
+);
+
+print("Created index: resources.internal_id_1");
 
 // Compound index covering the "mark-previous-version-superceded" update.
 // Every transaction-bundle ingest issues, per resource:
