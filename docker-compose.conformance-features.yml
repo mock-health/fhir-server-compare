@@ -25,7 +25,7 @@
 #             "storage-type not specified" with these env vars set, suggesting
 #             the storage destination needs configuration via an Aidbox-Project
 #             resource (admin API) rather than env vars on this image.
-#             Documented as a partial fix in methodology.md; v0.2 will wire
+#             Documented as a partial fix in docs/conformance-methodology.md; v0.2 will wire
 #             the proper Aidbox-Project storage config via a bootstrap script.
 #
 #   MS FHIR — NOT modified by this overlay.
@@ -48,19 +48,11 @@ services:
       - hapi.fhir.scheduling_disabled=false
 
   aidbox:
+    # Additional env layered on top of the base AIDBOX_* block. `BOX_*`
+    # additions work alongside the legacy envs (Aidbox accepts both
+    # namespaces). Compose merges `environment` maps key-by-key, so the base
+    # keys stay intact and only these are added.
     environment:
-      AIDBOX_LICENSE: "${AIDBOX_LICENSE:-}"
-      AIDBOX_CLIENT_ID: "${AIDBOX_CLIENT_ID:-basic-client}"
-      AIDBOX_CLIENT_SECRET: "${AIDBOX_CLIENT_SECRET:-secret}"
-      AIDBOX_ADMIN_ID: admin
-      AIDBOX_ADMIN_PASSWORD: "${AIDBOX_ADMIN_PASSWORD:-password}"
-      AIDBOX_PORT: "8888"
-      AIDBOX_FHIR_VERSION: "4.0.1"
-      PGHOST: aidbox-db
-      PGPORT: "5432"
-      PGUSER: aidbox
-      PGPASSWORD: aidbox
-      PGDATABASE: aidbox
       BOX_FEATURES_BULK_EXPORT_ENABLED: "true"
       BOX_BULK_STORAGE_BACKEND: "file"
       BOX_BULK_STORAGE_FILE_DIR: "/tmp/aidbox-bulk"

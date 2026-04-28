@@ -1,0 +1,38 @@
+{
+  "resourceType": "Bundle",
+  "type": "batch",
+  "entry": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "/Client",
+        "ifNoneExist": "_id=fhir-compare"
+      },
+      "resource": {
+        "resourceType": "Client",
+        "id": "fhir-compare",
+        "secret": "fhir-compare",
+        "grant_types": ["basic"]
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "/AccessPolicy",
+        "ifNoneExist": "_id=fhir-compare-policy"
+      },
+      "resource": {
+        "resourceType": "AccessPolicy",
+        "id": "fhir-compare-policy",
+        "engine": "allow",
+        "link": [
+          {
+            "resourceType": "Client",
+            "id": "fhir-compare"
+          }
+        ],
+        "description": "Allow-all AccessPolicy bound to the `fhir-compare` Client. mock.health's benchmark and conformance runners authenticate as this client via HTTP Basic (`fhir-compare:fhir-compare`) — replaces the external auth-proxy-aidbox sidecar we used before. Same shape as Health Samurai's own benchmark (HealthSamurai/fhir-server-performance-benchmark), just with a linked client so requests carry an identity like a real deployment."
+      }
+    }
+  ]
+}

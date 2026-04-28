@@ -4,7 +4,7 @@ Where the FHIR Server Compare harness is going. Dates are targets, not commitmen
 
 ## Current state — v0 (2026-Q2)
 
-- 7 OSS servers in the matrix: HAPI, Aidbox, Medplum, MS FHIR, Blaze, Spark, HFS.
+- 6 OSS servers in the matrix: HAPI, Aidbox, Medplum, MS FHIR, Blaze, Spark.
 - Single-patient behavioral matrix (`compare.py`) with 11 hand-picked queries.
 - Conformance TestScripts for `fhir-r4-base`, `smart-on-fhir-v2`, and `bulk-data-v2` profiles, MUST/SHOULD/MAY buckets.
 - Load test with 1K/4K/16K/64K checkpoint ladder, CRUD + Search workloads, ops/sec + p50 (median, headline) / p95 / p99 (tail evidence) latency + fairness metrics per server.
@@ -13,11 +13,12 @@ Where the FHIR Server Compare harness is going. Dates are targets, not commitmen
 
 ## v1 — first official round (target: 2026-Q3)
 
+- **Aidbox proxy-less auth.** The `auth-proxy-aidbox` sidecar is still in the conformance stack. The `aidbox.app/runme` reference config Health Samurai publishes uses a `BOX_*` env shape that forces every FHIR API call through the UI login flow (even with valid Basic credentials), so a clean drop of the proxy needs the right pairing of `BOX_SECURITY_DEV_MODE` / `BOX_SETTINGS_MODE` / init-bundle AccessPolicy. The init bundle (`docker/conformance-services/aidbox-init/initbundle.json`) is already mounted and provisions a `Client` + `AccessPolicy` on first boot, so the resources are pre-staged — only the env-shape sequencing is left.
 - **Cloud VM runner.** Move from a local laptop to a fixed AWS `c7i.4xlarge` (or equivalent) so hardware is consistent across rounds. Publish the AMI, kernel, Docker version, sysctl tuning.
 - **100K-patient stage.** Current ramp tops out at 50K. Extend to 100K for the first "scale" round.
 - **Additional workloads.** `$validate` against US Core profiles, `$everything` (patient summary), Bulk Data `$export`.
 - **Realistic clinical queries.** "All HbA1c for diabetics with CKD on metformin" — the query shape that actually appears in production. No one else is benchmarking it.
-- **Per-server profile pages.** Auto-generated from `servers.yaml` + the latest round's artifact.
+- **Per-server profile pages.** Auto-generated from `config/servers.yaml` + the latest round's artifact.
 - **Per-test explainer pages.** Each query and TestScript gets a permanent URL explaining what it's measuring and why.
 - **SVG badges.** `/conformance/badges/<server>/<profile>.svg` rendered live; vendors embed in their READMEs (the viral bit).
 - **CSV/JSON downloads** for every round, CDN-cached.

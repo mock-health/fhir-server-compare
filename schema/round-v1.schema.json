@@ -41,7 +41,7 @@
         "image":          { "type": "string", "description": "Container image reference exactly as it appears in docker-compose.yml (e.g. 'hapiproject/hapi:latest'). Pinning to sha256 digests is tracked separately." },
         "image_digest":   { "type": "string", "description": "Runtime-captured sha256:... of the image that actually ran. Optional — populated when the round-gen pipeline runs `docker image inspect` after a test run." },
         "source_url":     { "type": "string", "format": "uri", "description": "Canonical upstream project URL — GitHub repo for open-source servers, vendor docs for commercial ones. Used on the ServerPage header so readers can audit what was tested." },
-        "dockerfile_url": { "type": "string", "format": "uri", "description": "URL to the exact Dockerfile used when the server is built locally (e.g. HFS fork). Absent for servers pulled from an upstream registry." },
+        "dockerfile_url": { "type": "string", "format": "uri", "description": "URL to the exact Dockerfile used when the server is built locally (e.g. forked vendor binary). Absent for servers pulled from an upstream registry." },
         "homepage":       { "type": "string", "format": "uri" },
         "license":        { "type": "string", "description": "SPDX identifier" }
       }
@@ -176,6 +176,7 @@
         "n_ok":        { "type": "integer", "minimum": 0, "description": "Benchmark-only: count of successful (ok=true) requests backing the pXX_ms values when the headline uses ok-only stream (search); count of all records when the headline uses the full stream (CRUD)." },
         "n_err":       { "type": "integer", "minimum": 0, "description": "Benchmark-only: count of failed (ok=false) requests, including 60s worker timeouts. A high value is a legitimate 'server could not complete the workload' signal, not a harness bug." },
         "error_rate":  { "type": "number", "minimum": 0, "maximum": 1, "description": "Benchmark-only: fraction of requests that returned non-2xx (or timed out) at this checkpoint" },
+        "db_size_bytes": { "type": "integer", "minimum": 0, "description": "Benchmark-only: sum of named-volume bytes owned by this server at cell completion (from `docker system df -v`). Includes all storage sidecars (e.g. Aidbox's Postgres, search-index sidecars). Omitted when disk.json was missing or unparseable — distinguishes 'not measured' from 'zero bytes'. Servers with bind-mounted data will read 0; only named Docker volumes are counted." },
         "trust":       { "$ref": "#/definitions/trust", "description": "Benchmark-only: per-quantile trustworthiness for this evidence row plus a headline `reliable` flag." },
         "crud_phases": {
           "type": "array",

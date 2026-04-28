@@ -19,14 +19,13 @@
 #   docker inspect --format '{{range .RepoDigests}}{{.}}{{"\n"}}{{end}}' <image>:<tag>
 # and update the digest below.
 #
-# Ports (match defaults in servers.yaml):
+# Ports (match defaults in config/servers.yaml):
 #   8080 — HAPI
 #   8103 — Medplum server
 #   8081 — Microsoft FHIR Server
 #   8888 — Aidbox
 #   8082 — Blaze (Round 1 addition)
 #   8084 — Spark (Round 1 addition, BSD-3, Incendi-maintained Firely-lineage server)
-#   8085 — HFS (Round 2 spike, MIT, Rust, HeliosSoftware; Postgres backend)
 #
 # Internal service deps (postgres, redis, sqlserver) are not exposed on the
 # host; they only need to be reachable from their server within the compose
@@ -53,9 +52,23 @@ services:
     restart: unless-stopped
 
   # --- Aidbox -------------------------------------------------------------
-  # Free dev license required (register at aidbox.app, pasted into .env as
-  # AIDBOX_LICENSE). aidboxone bundles storage — no external Postgres needed
-  # for the dev tier.
+  # Env shape is the `AIDBOX_*` legacy surface (proven to work with our
+  # auth-proxy + compare.py harness). We pick up two vendor-recommended knobs
+  # from the `BOX_*` namespace — they're additive and don't conflict with the
+  # legacy envs:
+  #   - BOX_FHIR_SEARCH_DEFAULT_PARAMS_TOTAL=none  (disables implicit COUNT(*))
+  #   - BOX_INIT_BUNDLE                            (installs an AccessPolicy
+  #                                                  bundle at startup —
+  #                                                  currently unused but
+  #                                                  staged for the eventual
+  #                                                  proxy-less auth migration)
+  # Backing Postgres has moved from the deprecated `healthsamurai/aidboxdb`
+  # image to stock `postgres:18` — matches Health Samurai's own benchmark.
+  #
+  # Migrating a richer BOX_* env shape (à la `aidbox.app/runme`) is a
+  # follow-up: in that mode `BOX_SECURITY_DEV_MODE=true` + `BOX_SETTINGS_MODE`
+  # force the FHIR API through the UI auth flow, breaking proxy-less Basic.
+  # Once that's sorted we can retire `auth-proxy-aidbox` entirely.
   aidbox:
     image: healthsamurai/aidboxone@sha256:8af7d51a00832a853ffd25255fb9c569de1a4ee62aef877afe20847e873b5fa4  # :latest (Aidbox 2603) as of 2026-04-20
     container_name: fhir-compare-aidbox
@@ -63,6 +76,11 @@ services:
       - aidbox-db
     ports:
       - "8888:8888"
+    volumes:
+      # AccessPolicy + Client bundle — applied by Aidbox at first boot via
+      # BOX_INIT_BUNDLE. Not load-bearing for the current Basic-via-proxy
+      # path, but pre-wires the resources needed for a proxy-less cutover.
+      - ./docker/conformance-services/aidbox-init/initbundle.json:/tmp/initbundle.json:ro
     environment:
       AIDBOX_LICENSE: "${AIDBOX_LICENSE:-}"
       AIDBOX_CLIENT_ID: "${AIDBOX_CLIENT_ID:-basic-client}"
@@ -74,17 +92,42 @@ services:
       PGHOST: aidbox-db
       PGPORT: "5432"
       PGUSER: aidbox
-      PGPASSWORD: aidbox
+      PGPASSWORD: "${AIDBOX_DB_PASSWORD:-aidbox}"
       PGDATABASE: aidbox
+      # Vendor-recommended: disable implicit _total=accurate on every search.
+      # Computing the total count is a COUNT(*) over the filtered result set
+      # and is the dominant cost for many Aidbox search queries. Queries that
+      # *do* want an accurate total request it explicitly in the URL
+      # (e.g. observation_search_total_accurate in profiles/benchmark/search.yaml).
+      BOX_FHIR_SEARCH_DEFAULT_PARAMS_TOTAL: none
+      BOX_INIT_BUNDLE: file:///tmp/initbundle.json
     restart: unless-stopped
 
+  # Stock Postgres 18 for Aidbox. The old `healthsamurai/aidboxdb` image was
+  # deprecated ~12 months ago in favor of upstream Postgres — Health Samurai's
+  # own benchmark uses postgres:18 too. `pg_stat_statements` preloaded for
+  # post-run EXPLAIN analysis (matches other backing DBs in this stack).
+  # Aidbox 2603 connects via the `PG*` legacy envs above; no PGDATA override
+  # here so postgres:18 uses its default path at /var/lib/postgresql/18/docker.
+  # If migrating from a prior compose stack that stored PG16 data in the
+  # `aidbox-data` volume, remove it first (`docker volume rm
+  # fhir-server-compare_aidbox-data`) before bringing this stack up — PG18
+  # will refuse to reuse a PG16 cluster.
   aidbox-db:
-    image: healthsamurai/aidboxdb@sha256:e59d1afa672dec0288ee1d5005599c61eac06f4ce9558a5cba02042ecacdedf7  # :16 as of 2026-04-20
+    image: postgres:18
     container_name: fhir-compare-aidbox-db
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
     environment:
       POSTGRES_USER: aidbox
-      POSTGRES_PASSWORD: aidbox
+      POSTGRES_PASSWORD: "${AIDBOX_DB_PASSWORD:-aidbox}"
       POSTGRES_DB: aidbox
+      # postgres:18 defaults PGDATA to /var/lib/postgresql/18/docker. Pin the
+      # classic /var/lib/postgresql/data path so the volume bind target is
+      # stable across Postgres major-version bumps on our side.
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - aidbox-data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -102,10 +145,11 @@ services:
     ports:
       - "8103:8103"
     volumes:
-      # Medplum expects medplum.config.json in its working directory; env-var
+      # Medplum expects medplum.config.json in its working directory (mounted
+      # from config/medplum.config.json); env-var
       # config alone is not supported for this version. The file lives at
       # repo root and is bind-mounted read-only.
-      - ./medplum.config.json:/usr/src/medplum/medplum.config.json:ro
+      - ./config/medplum.config.json:/usr/src/medplum/medplum.config.json:ro
     restart: unless-stopped
 
   medplum-db:
@@ -222,91 +266,8 @@ services:
       # under /docker-entrypoint-initdb.d/ on the FIRST startup of a fresh
       # data volume. We mount our index-creation script there so any fresh
       # `make loadtest-reset-one SERVER=spark` produces a properly-indexed DB.
-      # See spark-mongo-init/01-create-indexes.js for the rationale.
-      - ./spark-mongo-init:/docker-entrypoint-initdb.d:ro
-    restart: unless-stopped
-
-  # --- HFS (Round 2 spike) ------------------------------------------------
-  # Helios FHIR Server — MIT-licensed, Rust. Documented production path is
-  # Postgres (doc store) + Elasticsearch (search index), so we run the
-  # split-backend (HFS_STORAGE_BACKEND=postgres-elasticsearch) to match the
-  # vendor's own recommendation. Internal port 8080 → host 8085.
-  # CapabilityStatement at root /metadata.
-  #
-  # Image is built locally from hfs-docker/Dockerfile.fork, which compiles
-  # HFS from our fork (mock-health/hfs @ fix/rest-body-limit-layer) with
-  # the PR #68 body-size fix applied. Without that fix, HFS silently caps
-  # bundles at axum's 2 MiB default regardless of HFS_MAX_BODY_SIZE — ~50%
-  # rejection rate on Synthea bundles. The fork-built binary is packaged
-  # on debian:trixie-slim (GLIBC 2.41), which also sidesteps upstream's
-  # glibc-mismatch packaging bug (published binary is 2.38+ on a 2.36
-  # runtime). See hfs-docker/Dockerfile.fork for rationale.
-  #
-  # To benchmark "as shipped" instead, swap to hfs-docker/Dockerfile
-  # (reuses the upstream binary).
-  hfs:
-    image: fhir-compare-hfs-fork:0.1.47
-    build:
-      context: ../hfs
-      dockerfile: ../fhir-server-compare/hfs-docker/Dockerfile.fork
-    container_name: fhir-compare-hfs
-    depends_on:
-      - hfs-db
-      - hfs-es
-    ports:
-      - "8085:8080"
-    environment:
-      HFS_STORAGE_BACKEND: postgres-elasticsearch
-      HFS_DATABASE_URL: "postgresql://hfs:hfs@hfs-db:5432/hfs"
-      HFS_SERVER_HOST: "0.0.0.0"
-      HFS_SERVER_PORT: "8080"
-      HFS_DEFAULT_FHIR_VERSION: R4
-      HFS_LOG_LEVEL: info
-      HFS_ELASTICSEARCH_NODES: "http://hfs-es:9200"
-      HFS_ELASTICSEARCH_INDEX_PREFIX: hfs
-      # Tells HFS what external URL to publish in Bundle.link.self/next and
-      # Bundle.entry.fullUrl — without this, HFS publishes the internal URL
-      # (http://localhost:8080) which the loadtest loader (and any other
-      # client on the host) cannot reach because Docker maps the container's
-      # 8080 to host 8085. Downstream effect: `harvest_patient_ids` follows
-      # the `next` link, hits localhost:8080, gets "Connection refused" and
-      # the CRUD workload crashes immediately. Setting this to the
-      # externally-reachable URL fixes pagination + fullUrls.
-      HFS_BASE_URL: "http://localhost:8085"
-      # HFS's default max body is 10 MB (axum DefaultBodyLimit wrapping) and
-      # the request timeout is 30s. Both reject ~half of Synthea transaction
-      # bundles out of the gate (chronic patients hit 30-70 MiB; ingest
-      # latency at 1K patients can exceed 30s). Bumping to match the rest of
-      # the roster: 100 MiB body cap, 1500s timeout (same as loader.py:113).
-      HFS_MAX_BODY_SIZE: "104857600"
-      HFS_REQUEST_TIMEOUT: "1500"
-    restart: unless-stopped
-
-  hfs-db:
-    image: postgres@sha256:468e1f126ca5af849799cda06ac9b03d8090aae9fa5163408b3e8da44fad0702  # postgres:16 as of 2026-04-20
-    container_name: fhir-compare-hfs-db
-    environment:
-      POSTGRES_USER: hfs
-      POSTGRES_PASSWORD: hfs
-      POSTGRES_DB: hfs
-    volumes:
-      - hfs-data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  hfs-es:
-    image: docker.elastic.co/elasticsearch/elasticsearch@sha256:01c1732062b4a846c5ca687b0094b89bad0bfed00c6d71626db32fb8f3131a78  # :8.15.3 as of 2026-04-20
-    container_name: fhir-compare-hfs-es
-    environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms6g -Xmx6g"
-      bootstrap.memory_lock: "true"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    volumes:
-      - hfs-es-data:/usr/share/elasticsearch/data
+      # See docker/spark-mongo-init/01-create-indexes.js for the rationale.
+      - ./docker/spark-mongo-init:/docker-entrypoint-initdb.d:ro
     restart: unless-stopped
 
 volumes:
@@ -315,5 +276,3 @@ volumes:
   msfhir-data:
   blaze-data:
   spark-data:
-  hfs-data:
-  hfs-es-data:

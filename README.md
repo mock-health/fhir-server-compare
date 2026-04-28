@@ -12,7 +12,6 @@ Load one Synthea patient into seven open-source FHIR servers, run the same queri
 | Microsoft FHIR Server | 4.0.728 | MIT | `mcr.microsoft.com/healthcareapis/r4-fhir-server` + SQL Server |
 | Blaze | 1.6.2 | Apache-2.0 | `samply/blaze` |
 | Spark | 2.4.1-r4 | BSD-3 | `sparkfhir/spark` + MongoDB |
-| HFS (Helios) | 0.1.47+pr68 | MIT | built from `hfs-docker/Dockerfile.fork` |
 
 Images are pinned by sha256 digest in `docker-compose.yml` so the stack is byte-for-byte reproducible across machines and time.
 
@@ -24,26 +23,25 @@ cp .env.example .env
 docker compose up -d
 # wait ~60s for all services to come up
 
-pip install -r requirements.txt
-python load_bundle.py --server hapi
-python load_bundle.py --server aidbox
-python load_bundle.py --server medplum
-python load_bundle.py --server msfhir
-python load_bundle.py --server blaze
-python load_bundle.py --server spark
-python load_bundle.py --server hfs
-python compare.py
+pip install -e .
+python -m fhirbench.load_bundle --server hapi
+python -m fhirbench.load_bundle --server aidbox
+python -m fhirbench.load_bundle --server medplum
+python -m fhirbench.load_bundle --server msfhir
+python -m fhirbench.load_bundle --server blaze
+python -m fhirbench.load_bundle --server spark
+python -m fhirbench.compare
 ```
 
-`compare.py` probes every server in `servers.yaml` and only includes the ones that respond. Servers that aren't up or aren't reachable are skipped with a one-line log — no flags needed to opt out.
+`fhirbench.compare` probes every server in `config/servers.yaml` and only includes the ones that respond. Servers that aren't up or aren't reachable are skipped with a one-line log — no flags needed to opt out.
 
 Want the fast path? Bring up just HAPI:
 
 ```bash
 docker compose up -d hapi
-pip install -r requirements.txt
-python load_bundle.py --server hapi
-python compare.py
+pip install -e .
+python -m fhirbench.load_bundle --server hapi
+python -m fhirbench.compare
 ```
 
 The matrix shows one column (HAPI) and the verdict column documents the expected behavior for the other six servers.
@@ -85,7 +83,7 @@ make loadtest-dryrun
 make loadtest-ramp-50k
 ```
 
-See `loadtest/` for the ingest loader, CRUD + search workload drivers, docker-stats resource sampler, stage orchestrator, and report generator. The search workload fires 23 queries uniformly at random per request, spanning seven FHIR routes (Patient, Observation, Condition, Procedure, Encounter, MedicationRequest, metadata) and eight filter shapes (token, string prefix, string exact, compound AND, date range, reference by patient / practitioner / location, and direct read-by-id). Ten of the queries are "runtime-sampled": their parameter values (patient ids, family names, diagnosis/procedure codes, practitioner and location ids) are drawn fresh per request from pools harvested against the target server at workload-start, so the numbers reflect cache-miss behavior on a live corpus rather than a hot 5-patient set. Per-query p50/p95/p99 is preserved in `evidence[].per_verb[]` in the round artifact. Results land under `results/loadtest/<run-id>/` as JSONL + a `summary.md` headline matrix.
+See `src/fhirbench/harness/` for the ingest loader, CRUD + search workload drivers, docker-stats resource sampler, stage orchestrator, and report generator. The search workload fires 23 queries uniformly at random per request, spanning seven FHIR routes (Patient, Observation, Condition, Procedure, Encounter, MedicationRequest, metadata) and eight filter shapes (token, string prefix, string exact, compound AND, date range, reference by patient / practitioner / location, and direct read-by-id). Ten of the queries are "runtime-sampled": their parameter values (patient ids, family names, diagnosis/procedure codes, practitioner and location ids) are drawn fresh per request from pools harvested against the target server at workload-start, so the numbers reflect cache-miss behavior on a live corpus rather than a hot 5-patient set. Per-query p50/p95/p99 is preserved in `evidence[].per_verb[]` in the round artifact. Results land under `results/loadtest/<run-id>/` as JSONL + a `summary.md` headline matrix.
 
 ## Conformance matrix
 
@@ -101,30 +99,38 @@ make conformance-validate  # schema-check the round artifact
 
 | File | Purpose |
 |------|---------|
-| `servers.yaml` | Per-server `base_url` + auth shape. Add a server by appending a block. |
-| `queries.yaml` | 29 hand-picked queries with `expected_<server>` annotations per column (plus 10 runtime-sampled load-only entries). |
-| `compare.py` | Probes servers, authenticates, loops queries, prints the matrix. |
-| `load_bundle.py` | POSTs the transaction bundle to one server (`--server <id>`). |
-| `_fhir_servers.py` | Shared config loader + auth shim used by both scripts. |
-| `docker-compose.yml` | Brings up all 7 servers + their deps (images pinned by sha256). |
+| `pyproject.toml` | Package metadata. Run `pip install -e .` once; everything else uses the installed `fhirbench` package. |
+| `Makefile` | Public entry points. `make help` lists every target. |
+| `docker-compose.yml` | Brings up all 6 servers + their deps (images pinned by sha256). |
+| `config/servers.yaml` | Per-server `base_url` + auth shape. Add a server by appending a block. |
+| `config/queries.yaml` | 29 hand-picked queries with `expected_<server>` annotations per column (plus 10 runtime-sampled load-only entries). |
+| `config/medplum.config.json`, `config/medplum-lb.conf` | Medplum server + nginx LB config. |
+| `src/fhirbench/servers.py` | Shared config loader + auth shim used by every entry point. |
+| `src/fhirbench/compare.py` | Probes servers, authenticates, loops queries, prints the matrix (`python -m fhirbench.compare`). |
+| `src/fhirbench/load_bundle.py` | POSTs the transaction bundle to one server (`python -m fhirbench.load_bundle --server <id>`). |
+| `src/fhirbench/harness/` | Multi-patient performance matrix: loader, workloads, report generator. |
+| `src/fhirbench/conformance/` | TestScript runner + result parser. |
+| `src/fhirbench/benchmark/` | Ramp-output → round-artifact aggregation. |
+| `src/fhirbench/publish/` | Copies round artifacts into the `fhir-studio` frontend. |
+| `src/fhirbench/cli/` | One-off CLI runners (k6 context emitter, harness diff, version fetcher). |
+| `src/fhirbench/k6/` | k6 JavaScript harness + Python NDJSON post-processor. |
+| `profiles/benchmark/`, `profiles/conformance/` | Workload profiles (YAML) consumed by the harness. |
+| `conformance/testscripts/` | FHIR TestScripts (one JSON per test) per profile / requirement bucket. |
+| `docs/benchmark-methodology.md`, `docs/conformance-methodology.md` | Methodology — shipped to fhir-studio on every publish. |
+| `docker/` | Dockerfile bundles (conformance-services, spark-mongo-init). Compose files stay at root. |
+| `schema/round-v1.schema.json` | Round artifact schema. |
 | `.env.example` | Template for the credentials docker-compose needs. |
-| `requirements.txt` | `httpx`, `PyYAML`, `matplotlib`, `jsonschema` — pinned exactly. |
-| `data/Aurelio_Whorton_transaction.json` | Synthea patient as a FHIR transaction bundle (171 entries). |
-| `data/Aurelio_Whorton_collection.json` | The original Synthea collection bundle, shipped for transparency. |
-| `loadtest/` | Multi-patient performance matrix: loader, workloads, report generator. |
-| `conformance/` | TestScript profiles + runner for the conformance matrix. |
-| `benchmark/`, `schema/` | Round artifact schema + methodology notes. |
 
 ## Validation strictness varies per server
 
-Each server enforces a different subset of FHIR R4 validation. Loading the same Synthea bundle produces different failures per server: Aidbox applies its own validation profile, Medplum is HAPI-permissive, MS FHIR is mid-strict, Blaze is structurally strict around terminology references. Run `python load_bundle.py --server <id>` against each and capture what fails — the observed strip-rule set **per server** is the story.
+Each server enforces a different subset of FHIR R4 validation. Loading the same Synthea bundle produces different failures per server: Aidbox applies its own validation profile, Medplum is HAPI-permissive, MS FHIR is mid-strict, Blaze is structurally strict around terminology references. Run `python -m fhirbench.load_bundle --server <id>` against each and capture what fails — the observed strip-rule set **per server** is the story.
 
 ## Adding a server
 
-1. Append a new entry to `servers.yaml` (set `base_url` and pick an `auth.type`).
-2. Add an `expected_<newid>` column to every query in `queries.yaml`.
+1. Append a new entry to `config/servers.yaml` (set `base_url` and pick an `auth.type`).
+2. Add an `expected_<newid>` column to every query in `config/queries.yaml`.
 3. Add a service to `docker-compose.yml` (and pin the image by sha256 digest).
-4. Run `python load_bundle.py --server <newid>` and `python compare.py` and fill in the observed behavior in `queries.yaml`.
+4. Run `python -m fhirbench.load_bundle --server <newid>` and `python -m fhirbench.compare` and fill in the observed behavior in `config/queries.yaml`.
 
 See `CONTRIBUTING.md` for submission guidelines.
 
@@ -133,5 +139,14 @@ See `CONTRIBUTING.md` for submission guidelines.
 - **One patient, not a thousand.** Structural divergence surfaces on the first query; volume is the performance story, not the correctness story.
 - **Latency is informational, not benchmark-quality.** The single-patient matrix is cold-cache, single-threaded, sample-of-one. The load test is the serious performance story.
 - **No writes except the initial load.** `compare.py` is GET-only (and `Patient/$export`, which is read-intent per the Bulk Data spec).
-- **No credentials needed beyond your own Aidbox dev license.** Everything else runs on your machine.
+- **No credentials needed.** The `aidboxone:latest` image runs out-of-box with the reference starter config from `aidbox.app/runme`; everything else runs on your machine with zero-config defaults.
 - **All OSS.** Every server in the matrix can be reproduced locally; no managed services, no paid tiers.
+
+## Related work
+
+This project is a neutral-territory observatory: one harness, every server, published numbers with methodology. It sits alongside vendor-run benchmarks, not in place of them. Two that are worth reading when working in this space:
+
+- [**HealthSamurai/fhir-server-performance-benchmark**](https://github.com/HealthSamurai/fhir-server-performance-benchmark) — the Aidbox team's own benchmark (k6, multi-vendor, CI-driven). mock.health's Aidbox configuration, index set, and `BOX_FHIR_SEARCH_DEFAULT_PARAMS_TOTAL` setting mirror their recommendations verbatim — see [`docs/benchmark-methodology.md`](docs/benchmark-methodology.md#vendor-recommended-configuration).
+- Vendor-specific performance docs linked per-server in [`docs/benchmark-methodology.md`](docs/benchmark-methodology.md).
+
+If you run a FHIR server and have a recommended configuration, benchmark result, or methodology note you'd like reflected here, open an issue or PR.
