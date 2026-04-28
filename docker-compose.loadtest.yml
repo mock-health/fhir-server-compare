@@ -11,10 +11,13 @@
 #      server is under test — contaminating p99 latency with loader-side noise
 #      and silently penalizing fast servers (HAPI/Aidbox) that drive the loader
 #      harder.
-#   3. Stock Postgres tuned to FHIR-workload appropriate values for hapi-db AND
-#      medplum-db. Aidbox ships its own preconfigured `aidboxdb` image; without
-#      tuning the others, we'd be comparing a tuned database to a default one.
-#      This removes that vendor-asymmetry from the headline numbers.
+#   3. Stock Postgres tuned to FHIR-workload appropriate values for every
+#      backing DB in the stack (hapi-db, medplum-db, aidbox-db). All
+#      three use stock postgres:16 or :18 with matching OLTP tuning so vendor
+#      critics can't claim a configuration asymmetry. (Pre-2026-04-24 this
+#      stack used the `healthsamurai/aidboxdb` image for Aidbox, which was
+#      deprecated ~12 months earlier; Health Samurai's own benchmark now uses
+#      stock postgres:18, and we follow suit.)
 #   4. Images pinned to sha256 digests captured on 2026-04-17 so Stage 1 and
 #      Stage 3 measure the same software three days apart.
 #
@@ -50,7 +53,7 @@ x-medplum-server: &medplum_server
     medplum-redis:
       condition: service_healthy
   volumes:
-    - ./medplum.config.json:/usr/src/medplum/medplum.config.json:ro
+    - ./config/medplum.config.json:/usr/src/medplum/medplum.config.json:ro
   cpus: 2.5
   mem_limit: 28g
   cpuset: "0-11,16-27"
@@ -149,7 +152,38 @@ services:
     cpuset: "0-11,16-27"
 
   aidbox-db:
-    image: healthsamurai/aidboxdb@sha256:e59d1afa672dec0288ee1d5005599c61eac06f4ce9558a5cba02042ecacdedf7
+    # Stock postgres:18 + OLTP tuning parity with hapi-db / medplum-db    # (all other backing DBs in this stack use identical tuning). Health
+    # Samurai's benchmark runs Aidbox on stock postgres:17/:18 with pg_tune-class
+    # values; we match.
+    image: postgres:18
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "shared_buffers=8GB"
+      - "-c"
+      - "effective_cache_size=24GB"
+      - "-c"
+      - "work_mem=64MB"
+      - "-c"
+      - "maintenance_work_mem=2GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=8"
+      - "-c"
+      - "max_parallel_workers_per_gather=4"
+      - "-c"
+      - "max_parallel_workers=8"
+      - "-c"
+      - "wal_compression=on"
     cpus: 6.0
     mem_limit: 32g
     cpuset: "0-11,16-27"
@@ -186,7 +220,7 @@ services:
     ports:
       - "8103:8103"
     volumes:
-      - ./medplum-lb.conf:/etc/nginx/nginx.conf:ro
+      - ./config/medplum-lb.conf:/etc/nginx/nginx.conf:ro
     cpus: 2.0
     mem_limit: 1g
     cpuset: "0-11,16-27"
@@ -338,63 +372,6 @@ services:
     # added here; if 100K runs surface mongo as the bottleneck, revisit
     # cacheSizeGB and storage compaction settings.
     cpus: 6.0
-    mem_limit: 32g
-    cpuset: "0-11,16-27"
-
-  # --- HFS (Round 2 spike) -----------------------------------------------
-  # Helios FHIR Server, Rust, Postgres + Elasticsearch split-backend (the
-  # vendor's documented production path). Stack budget 8 + 4 + 4 = 16 CPU
-  # (vs 18 for HAPI/Aidbox single-backend) — the ES tier replaces part of
-  # the "server does its own search indexing" work that Postgres-only
-  # servers keep in-process. Memory: server 64 GiB + pg 16 GiB + es 32 GiB
-  # (6 GiB heap + off-heap page cache) = 112 GiB, fits the same cpuset.
-  hfs:
-    image: fhir-compare-hfs-fork:0.1.47
-    build:
-      context: ../hfs
-      dockerfile: ../fhir-server-compare/hfs-docker/Dockerfile.fork
-    cpus: 8.0
-    mem_limit: 64g
-    cpuset: "0-11,16-27"
-
-  hfs-db:
-    image: postgres:16
-    # Same OLTP tuning as hapi-db / medplum-db — all three use stock postgres,
-    # so they must match to remove the "you tuned theirs and not ours" vendor
-    # asymmetry from headline numbers.
-    command:
-      - "postgres"
-      - "-c"
-      - "shared_buffers=4GB"
-      - "-c"
-      - "effective_cache_size=12GB"
-      - "-c"
-      - "work_mem=64MB"
-      - "-c"
-      - "maintenance_work_mem=1GB"
-      - "-c"
-      - "max_wal_size=4GB"
-      - "-c"
-      - "checkpoint_completion_target=0.9"
-      - "-c"
-      - "random_page_cost=1.1"
-      - "-c"
-      - "effective_io_concurrency=200"
-      - "-c"
-      - "max_worker_processes=8"
-      - "-c"
-      - "max_parallel_workers_per_gather=4"
-      - "-c"
-      - "max_parallel_workers=8"
-      - "-c"
-      - "wal_compression=on"
-    cpus: 4.0
-    mem_limit: 16g
-    cpuset: "0-11,16-27"
-
-  hfs-es:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
-    cpus: 4.0
     mem_limit: 32g
     cpuset: "0-11,16-27"
 

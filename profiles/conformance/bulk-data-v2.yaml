@@ -1,0 +1,70 @@
+id: bulk-data-v2
+label: Bulk Data kickoff surface
+version: "2.0.0-kickoff"
+spec_url: https://hl7.org/fhir/uv/bulkdata/STU2/
+status: active
+description: |
+  Tests the Bulk Data Access IG v2 *kickoff surface* — Patient/$export request
+  shape, 202 Accepted response, Content-Location header, capability declaration,
+  group/system endpoint discoverability. Does NOT test the full async lifecycle
+  (status URL polling, NDJSON output validation, JWT-signed Backend Services
+  auth) — that ships in Round 1 with Inferno integration.
+buckets:
+  - MUST
+  - SHOULD
+  - MAY
+# ---------------------------------------------------------------------------
+# Methodology: N/A vs. fail
+#
+# A server's bulk-data-v2 cell becomes N/A (not applicable) when the *entire
+# profile surface* is unreachable — either the route isn't wired (Blaze,
+# Spark both 404/400 the kickoff) or a mandatory infra dependency isn't
+# configured in the vendor's default dev tier (Aidbox needs a cloud storage
+# backend). N/A means "we cannot measure this server on this profile at all,"
+# and the na_reason string explains why.
+#
+# A server with a *partial* implementation is NOT N/A. It's scored on what it
+# does and docked for what it doesn't. Medplum is the canonical example:
+# Patient/$export → 202 and /$export (system) → 202, so the profile surface
+# IS reachable and the applicability probe passes. But Group/$export → 404
+# because Medplum chose not to implement Group-level export (the source
+# defines patientExportHandler and bulkExportHandler, no groupExportHandler).
+# That's a real feature gap against a SHOULD in the Bulk Data IG v2, and the
+# right signal to a buyer is "amber, 5/6" — not "N/A."
+#
+# Rule of thumb: if the applicability probe doesn't trip N/A, every test is
+# scored honestly on its own merits. Collapsing feature gaps into N/A would
+# launder a measurable capability difference behind a policy knob.
+# ---------------------------------------------------------------------------
+#
+# Applicability probe: if a server doesn't route Patient/$export at all
+# (returns 404), Bulk Data v2 is marked N/A for that server rather than red.
+# Scoring a server 0/6 for a feature it never claimed to implement would
+# misattribute scope ("this server is broken at bulk") vs. fact ("this server
+# does not implement bulk, see methodology").
+applicability:
+  probe:
+    method: GET
+    path: /Patient/$export
+    headers:
+      Prefer: respond-async
+      Accept: application/fhir+json
+  # 404 = route unknown. 400 is also a "not implemented" signal in practice:
+  # Blaze and Spark don't route $export, so they fall through to
+  # `GET Patient/{id}` and return 400 with "$export is not a valid id" — that's
+  # functionally the same as 404 for our purposes (the server doesn't
+  # implement bulk), so treating it as N/A avoids scoring a feature-less
+  # server as "red" when the honest signal is "out of scope."
+  na_if_status: [400, 404]
+  na_reason: "Patient/$export operation not implemented"
+  # Body-match rules for servers that DO implement bulk but require
+  # deployment-time infrastructure we don't provide (e.g., cloud object
+  # storage). Aidbox returns 500 with "storage-type not specified" when
+  # BOX_FHIR_BULK_STORAGE_PROVIDER isn't set — that's a configuration gap
+  # for this deployment tier, not an Aidbox defect. Methodology: we score
+  # servers on what they do out-of-the-box in their free/dev tier. If the
+  # vendor's default deployment can't do bulk, the cell is N/A with a
+  # pointer to what would need to be configured.
+  na_if_body_contains:
+    - substring: "storage-type not specified"
+      reason: "Aidbox Bulk Data requires a cloud storage backend (GCP/Azure/AWS) that is not configured in the local aidboxone dev image; see https://www.health-samurai.io/docs/aidbox/api/bulk-api/export"
