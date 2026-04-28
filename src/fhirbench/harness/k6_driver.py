@@ -1,12 +1,10 @@
-"""Shim that lets fhirbench.harness.ramp invoke the k6 harness in place of the Python
-workload drivers (workload_crud + workload_search).
+"""Shim that lets fhirbench.harness.ramp drive the k6 workload harness.
 
 The Python ramp owns the per-server lifecycle (boot → wait healthy → bootstrap
-→ ingest → workloads → cell_complete). Switching a single cell's workload
-phase to k6 means replacing the two `workload_*.run()` calls with one
-invocation here: we emit the k6 context file, run grafana/k6 inside docker
-for CRUD and Search back-to-back, and convert the raw NDJSON into the same
-crud.jsonl / search.jsonl shape the rest of the pipeline already reads.
+→ ingest → workloads → cell_complete). For each cell's workload phase we emit
+the k6 context file, run grafana/k6 inside docker for CRUD and Search
+back-to-back, and convert the raw NDJSON into the crud.jsonl / search.jsonl
+shape the rest of the pipeline reads.
 
 By design this module has zero knowledge of ramp / cell layout — it takes a
 server id, a cell directory, a workload duration, and produces two JSONL

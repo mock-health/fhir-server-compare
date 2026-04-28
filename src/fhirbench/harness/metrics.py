@@ -1,7 +1,8 @@
 """Shared workload timing helpers: op record, percentile math, JSONL logger.
 
-Both workload_crud and workload_search emit per-op records through this
-module so the report stage has a uniform shape to aggregate.
+The k6 post-processor (fhirbench.k6.postprocess) writes per-op records
+through OpRecord/OpLog so the cell-summary + parse-report pipeline has a
+uniform shape to aggregate. `percentile()` is reused by cell_summary.py.
 """
 from __future__ import annotations
 

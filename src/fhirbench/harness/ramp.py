@@ -46,19 +46,32 @@ import sys
 import time
 from pathlib import Path
 
-from fhirbench.harness import generate, loader, workload_crud, workload_search  # noqa: E402
-from fhirbench.harness import k6_driver  # noqa: E402
+from fhirbench.harness import generate, k6_driver, loader  # noqa: E402
 from fhirbench.harness.host_meta import write_meta  # noqa: E402
 from fhirbench.harness.resources import ResourceSampler, snapshot_disk  # noqa: E402
-from fhirbench.harness.stage import SERVER_CONTAINERS  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_RESULTS_ROOT = REPO_ROOT / "results" / "loadtest"
 DEFAULT_SERVERS = REPO_ROOT / "config" / "servers.yaml"
-DEFAULT_QUERIES = REPO_ROOT / "config" / "queries.yaml"
 DEFAULT_INPUT_DIR = REPO_ROOT / "data" / "loadtest" / "fhir"
 DEFAULT_PREREQ_DIR = REPO_ROOT / "data" / "loadtest" / "prerequisites"
 DEFAULT_SYNTHEA_DIR = REPO_ROOT / "synthea"
+
+# Containers each server OWNS (server + its sidecars). The resource sampler
+# follows these so the report shows full-stack resource use per server.
+SERVER_CONTAINERS: dict[str, list[str]] = {
+    "hapi":    ["fhir-compare-hapi", "fhir-compare-hapi-db"],
+    "aidbox":  ["fhir-compare-aidbox", "fhir-compare-aidbox-db"],
+    "blaze":   ["fhir-compare-blaze"],
+    "spark":   ["fhir-compare-spark", "fhir-compare-spark-db"],
+    "medplum": [
+        "fhir-compare-medplum-1", "fhir-compare-medplum-2",
+        "fhir-compare-medplum-3", "fhir-compare-medplum-4",
+        "fhir-compare-medplum-lb",
+        "fhir-compare-medplum-db", "fhir-compare-medplum-redis",
+    ],
+    "msfhir":  ["fhir-compare-msfhir", "fhir-compare-msfhir-db"],
+}
 
 # Default order is fastest-first, based on empirical 1K ingest numbers:
 #   Blaze:   19,272 res/s  (RocksDB embedded, Clojure — fastest)
@@ -69,31 +82,6 @@ DEFAULT_SYNTHEA_DIR = REPO_ROOT / "synthea"
 #   Spark:     ~20  res/s  (MongoDB — ingest-bottlenecked; 1K takes hours)
 # Ordering so the fastest finishes first gives per-checkpoint data faster.
 DEFAULT_SERVER_ORDER = ("blaze", "hapi", "aidbox", "msfhir", "medplum", "spark")
-
-# Phased CRUD: per-verb (sample_cap, time_cap_seconds).
-# R and V are fastest, bounded tighter on time — they should always hit
-# cap in seconds. C/U/D get a 5-min cap so slow servers get enough tail
-# samples for p99 without starving the ramp's overnight budget.
-DEFAULT_CRUD_SAMPLE_CAP = 50_000
-DEFAULT_CRUD_TIME_CAP_S = 300.0
-DEFAULT_CRUD_R_TIME_CAP_S = 60.0
-# Prewarm amortizes first-time JIT / plan-compile / cold-index-touch
-# costs per U template before the timed U phase. 200 ops × 6 templates
-# = 1,200 ops, typically <30s wall. Ops land in crud_prewarm.jsonl and
-# never touch percentile math.
-DEFAULT_CRUD_PREWARM_PER_TEMPLATE = 200
-
-
-def _build_phase_caps(
-    sample_cap: int, time_cap_s: float, r_time_cap_s: float,
-) -> dict[str, tuple[int, float]]:
-    return {
-        "C": (sample_cap, time_cap_s),
-        "U": (sample_cap, time_cap_s),
-        "R": (sample_cap, r_time_cap_s),
-        "V": (sample_cap, r_time_cap_s),
-        "D": (sample_cap, time_cap_s),
-    }
 
 # Compose files, same pair the Makefile uses.
 COMPOSE_FILES = ("-f", "docker-compose.yml", "-f", "docker-compose.loadtest.yml")
@@ -272,11 +260,7 @@ def run_one_server(
     input_dir: Path,
     prereq_dir: Path,
     servers_file: Path,
-    queries_file: Path,
     results_root: Path,
-    crud_phase_caps: dict[str, tuple[int, float]],
-    crud_prewarm_per_template: int,
-    workload_harness: str = "python",
 ) -> None:
     """Reset+boot this server ONCE, then ingest the delta at each checkpoint."""
     run_dir = results_root / run_id
@@ -388,59 +372,16 @@ def run_one_server(
                 print(f"  [fairness] {server_id} has {realized}/{checkpoint} patients "
                       f"({(realized/checkpoint)*100:.1f}%); this cell added +{loaded_this_cell}")
 
-                # Warmup every checkpoint: DB state has changed (2x the rows),
-                # query plans may recompile, caches need re-seeding. Python
-                # harness only — k6 runs long enough (typically 15 min) that
-                # the plan-recompile transient is statistically irrelevant in
-                # the percentile windows.
-                if workload_harness != "k6":
-                    print(f"  [warmup] 30s {server_id} warmup before timed phase")
-                    workload_crud.run(
-                        server_id=server_id, servers_path=servers_file,
-                        log_path=server_dir / "warmup.jsonl",
-                        duration=30.0, workers=max(8, workers_workload // 4),
-                        mix_spec="C:10,R:60,U:25,D:5",
-                    )
-
-                if workload_harness == "k6":
-                    # K6 harness: run CRUD + Search back-to-back via k6, then
-                    # convert the raw NDJSON into crud.jsonl / search.jsonl in
-                    # the same shape the Python drivers would have produced.
-                    # cell_summary.py / parse_report.py are harness-agnostic
-                    # — they just read the JSONLs. No crud_phases.json because
-                    # k6 runs mix-mode CRUD, not phased C→U→R→V→D.
-                    k6_driver.run_workloads(
-                        server_id=server_id,
-                        server_dir=server_dir,
-                        workload_duration=workload_duration,
-                    )
-                else:
-                    # Python harness (default). Search runs BEFORE CRUD so it
-                    # measures the post-ingest steady state, not a state
-                    # mutated by 50K creates/deletes from the CRUD phase.
-                    workload_search.run(
-                        server_id=server_id, servers_path=servers_file, queries_path=queries_file,
-                        log_path=server_dir / "search.jsonl",
-                        duration=workload_duration, workers=workers_workload,
-                        exclude={"patient_export"},
-                    )
-                    # Phased CRUD: per-verb timed phases, each capped at
-                    # min(sample_cap, duration_cap). Produces enough samples
-                    # per verb per cell for p90/p99 with ±5% CI on every
-                    # "reliable"-flagged cell. See crud_phases.json for
-                    # per-phase accounting (samples, elapsed_ms, stop_reason).
-                    phase_summaries = workload_crud.run(
-                        server_id=server_id, servers_path=servers_file,
-                        log_path=server_dir / "crud.jsonl",
-                        duration=0.0, workers=workers_workload, mix_spec="",
-                        phased=True, phase_caps=crud_phase_caps,
-                        prewarm_per_template=crud_prewarm_per_template,
-                        prewarm_log_path=server_dir / "crud_prewarm.jsonl",
-                    )
-                    if isinstance(phase_summaries, list):
-                        (server_dir / "crud_phases.json").write_text(
-                            json.dumps(phase_summaries, indent=2)
-                        )
+                # K6 runs CRUD + Search back-to-back; the raw NDJSON is
+                # converted into crud.jsonl / search.jsonl which cell_summary.py
+                # and parse_report.py read directly. No warmup phase: k6 runs
+                # long enough (typically 15 min/workload) that the plan-recompile
+                # transient is statistically irrelevant in the percentile windows.
+                k6_driver.run_workloads(
+                    server_id=server_id,
+                    server_dir=server_dir,
+                    workload_duration=workload_duration,
+                )
 
             snapshot_disk(server_dir / "disk.json")
             (server_dir / "cell_complete.json").write_text(json.dumps({
@@ -495,18 +436,12 @@ def run_ramp(
     prereq_dir: Path,
     synthea_dir: Path,
     servers_file: Path,
-    queries_file: Path,
     results_root: Path,
     seed: int,
-    crud_sample_cap: int = DEFAULT_CRUD_SAMPLE_CAP,
-    crud_time_cap_s: float = DEFAULT_CRUD_TIME_CAP_S,
-    crud_r_time_cap_s: float = DEFAULT_CRUD_R_TIME_CAP_S,
-    crud_prewarm_per_template: int = DEFAULT_CRUD_PREWARM_PER_TEMPLATE,
-    workload_harness: str = "python",
 ) -> int:
     checkpoints = tuple(sorted(set(checkpoints)))
     print(f"\nRAMP: checkpoints={list(checkpoints)} servers={list(servers)} "
-          f"run_id={run_id} harness={workload_harness}")
+          f"run_id={run_id}")
 
     # Capture host metadata once at run start. Methodology rigor — anyone
     # reproducing this needs to know the kernel, governor, THP setting, and
@@ -526,12 +461,6 @@ def run_ramp(
         synthea_dir=synthea_dir, output_dir=input_dir, prereq_dir=prereq_dir,
     )
 
-    crud_phase_caps = _build_phase_caps(
-        crud_sample_cap, crud_time_cap_s, crud_r_time_cap_s,
-    )
-    print(f"CRUD phase caps: {crud_phase_caps}")
-    print(f"CRUD prewarm: {crud_prewarm_per_template} ops/template")
-
     t_total = time.monotonic()
     for server_id in servers:
         server_banner = f"##### SERVER {server_id} #####"
@@ -546,11 +475,7 @@ def run_ramp(
             input_dir=input_dir,
             prereq_dir=prereq_dir,
             servers_file=servers_file,
-            queries_file=queries_file,
             results_root=results_root,
-            crud_phase_caps=crud_phase_caps,
-            crud_prewarm_per_template=crud_prewarm_per_template,
-            workload_harness=workload_harness,
         )
 
     elapsed = (time.monotonic() - t_total) / 60.0
@@ -576,28 +501,8 @@ def main() -> int:
     ap.add_argument("--prereq-dir", type=Path, default=DEFAULT_PREREQ_DIR)
     ap.add_argument("--synthea-dir", type=Path, default=DEFAULT_SYNTHEA_DIR)
     ap.add_argument("--servers-file", type=Path, default=DEFAULT_SERVERS)
-    ap.add_argument("--queries-file", type=Path, default=DEFAULT_QUERIES)
     ap.add_argument("--results-root", type=Path, default=DEFAULT_RESULTS_ROOT)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--crud-sample-cap", type=int, default=DEFAULT_CRUD_SAMPLE_CAP,
-                    help="Max samples per CRUD verb phase (C/U/R/D).")
-    ap.add_argument("--crud-time-cap-seconds", type=float, default=DEFAULT_CRUD_TIME_CAP_S,
-                    help="Max wall-clock per C/U/D phase. Slow servers will hit this instead of the sample cap.")
-    ap.add_argument("--crud-r-time-cap-seconds", type=float, default=DEFAULT_CRUD_R_TIME_CAP_S,
-                    help="Max wall-clock for the R (read-your-own-write) and V (vread) phases. Both are fast; usually hit sample cap first.")
-    ap.add_argument("--crud-prewarm-per-template", type=int,
-                    default=DEFAULT_CRUD_PREWARM_PER_TEMPLATE,
-                    help="Prewarm each of the 6 U templates with this many ops "
-                         "before the timed U phase (writes to crud_prewarm.jsonl, "
-                         "not included in percentiles). Set to 0 to disable.")
-    ap.add_argument("--workload-harness", choices=("python", "k6"), default="python",
-                    help="Which harness drives the timed CRUD + Search phase. "
-                         "python (default) = phased CRUD + per-verb breakouts via "
-                         "the Python thread-pool drivers. k6 = grafana/k6 container, "
-                         "mix-mode CRUD (no phased C/U/R/V/D), raw NDJSON converted "
-                         "into the same crud.jsonl / search.jsonl shape. Warmup is "
-                         "always Python regardless of this flag so thermal conditions "
-                         "match across harnesses.")
     args = ap.parse_args()
     servers = tuple(s.strip() for s in args.servers.split(",") if s.strip())
     for s in servers:
@@ -615,14 +520,8 @@ def main() -> int:
         prereq_dir=args.prereq_dir,
         synthea_dir=args.synthea_dir,
         servers_file=args.servers_file,
-        queries_file=args.queries_file,
         results_root=args.results_root,
         seed=args.seed,
-        crud_sample_cap=args.crud_sample_cap,
-        crud_time_cap_s=args.crud_time_cap_seconds,
-        crud_r_time_cap_s=args.crud_r_time_cap_seconds,
-        crud_prewarm_per_template=args.crud_prewarm_per_template,
-        workload_harness=args.workload_harness,
     )
 
 
