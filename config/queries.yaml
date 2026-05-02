@@ -29,6 +29,28 @@
 #
 # Schema:
 #   name:             short identifier (used as a column header)
+#   resource_type:    FHIR resource type the query targets (Patient,
+#                     Observation, Condition, Procedure, Encounter,
+#                     MedicationRequest, ValueSet, CodeSystem) or
+#                     "Metadata" for /metadata. Propagated into the k6
+#                     metric tags by emit_k6_context.py + search.js so
+#                     the published per_verb breakdown can be sliced by
+#                     resource type — added 2026-04-30 in response to
+#                     feedback from Marat Surmashev (Health Samurai)
+#                     about per-type latency deviation. See
+#                     plans/marat-from-health-samurai-wondrous-tome.md.
+#   complexity:       Search-class label, one of
+#                       SIMPLE     — single-parameter token/string/date/ref
+#                       COMPLEX    — multi-param, compound, includes/revinclude
+#                       FULL_TEXT  — _content or :text modifier substring
+#                       OPERATION  — FHIR operation ($expand, $lookup,
+#                                    $export, _history, /metadata)
+#                     Same plumbing as resource_type — propagated into the
+#                     metric tag and grouped in the published per_verb
+#                     breakdown so readers can compare server speed across
+#                     search complexity classes. The "FULL_TEXT" class
+#                     covers the third HealthSamurai-roadmap bucket; we
+#                     ship live coverage of all three before they do.
 #   blog_section:     the post section title this query backs up
 #   description:      one-liner shown above the table row
 #   method:           GET (default) or POST
@@ -86,6 +108,8 @@
 
 queries:
   - name: capability_statement
+    resource_type: Metadata
+    complexity: OPERATION
     blog_section: "Operations support is where the gap is biggest"
     description: Server CapabilityStatement from /metadata. Every server returns a valid CapabilityStatement, but the top-level fields differ.
     path: metadata
@@ -97,6 +121,8 @@ queries:
     expected_spark:   "200 — CapabilityStatement v2.4.1 publisher='Incendi', describes itself as 'reference Implementation server built in C# on HL7.Fhir.Core (nuget) by Firely, Incendi and others'"
 
   - name: observation_search_default
+    resource_type: Observation
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Search Observation with _count=10 and no _total. HAPI omits Bundle.total by default when the result set is larger than the page; GCP always populates total.
     path: Observation
@@ -110,6 +136,8 @@ queries:
     expected_spark:   "200 — Bundle.total=360 populated by default (Spark joins the populate-total camp; the count differs from Blaze's 185 because Spark indexes more resource types per-bundle by default)"
 
   - name: observation_search_total_accurate
+    resource_type: Observation
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Same query with _total=accurate. Confirms HAPI omits total only by default, not by capability.
     path: Observation
@@ -124,6 +152,8 @@ queries:
     expected_spark:   "200 — Bundle.total = 360 (Spark honors _total=accurate same as default; note Spark returned 2 entries for _count=1 — minor _count handling anomaly worth flagging)"
 
   - name: q7_error_unsupported_param
+    resource_type: Patient
+    complexity: COMPLEX
     blog_section: "The silent-ignore that will eat your filter"
     description: Sends a deliberately misspelled search parameter. THE most important divergence in the post.
     path: Patient
@@ -139,6 +169,8 @@ queries:
     expected_spark:   "200 — Bundle with total=270 unfiltered, 2 entries. Spark also SILENT-IGNORES."
 
   - name: observation_by_code
+    resource_type: Observation
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Search Observation by LOINC code 8480-6 (systolic blood pressure). The default `code` parameter only matches the top-level Observation.code field, not Observation.component.code. Synthea encodes BP as a panel (85354-9) with systolic in component[0], so this query returns ZERO on every server despite the bundle containing BP data.
     path: Observation
@@ -154,6 +186,8 @@ queries:
     expected_spark:   "200 — Bundle.total = 0 BUT returned 1 entry (Spark anomaly: claims zero total, returns one entry — minor consistency bug)"
 
   - name: q1_uscore_observation_combo
+    resource_type: Observation
+    complexity: COMPLEX
     blog_section: "Search behavior diverges in ways you will not notice"
     description: The fix — search the same code via the FHIR R4 combo-code parameter (defined in the base spec for Observation), which matches BOTH Observation.code AND Observation.component.code. Returns the BP panels the previous query missed.
     path: Observation
@@ -169,6 +203,8 @@ queries:
     expected_spark:   "200 — Bundle.total = 17, 2 entries (Spark also honors combo-code; counts differ across stores due to indexing differences)"
 
   - name: patient_by_gender
+    resource_type: Patient
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Patient search by gender. Token match on ~50% of the corpus — exercises large-result handling and pagination. Adds Patient-route coverage to the load mix, which was previously Observation-only.
     path: Patient
@@ -184,6 +220,8 @@ queries:
     expected_spark:   "?"
 
   - name: patient_by_family_prefix
+    resource_type: Patient
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Patient search by family name prefix. FHIR default string-search semantics are case-insensitive prefix match; Synthea surnames have digit suffixes (Sporer811, Stoltenberg489), so a single-letter prefix like "S" matches many records at every checkpoint. Exercises the family-name index.
     path: Patient
@@ -198,6 +236,8 @@ queries:
     expected_spark:   "?"
 
   - name: patient_by_given_prefix
+    resource_type: Patient
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Patient search by given name prefix. Same shape as family-prefix but indexes the `given` component, which on several servers is stored in a separate column or index from `family`. Exercises that separate path.
     path: Patient
@@ -212,6 +252,8 @@ queries:
     expected_spark:   "?"
 
   - name: patient_by_gender_family
+    resource_type: Patient
+    complexity: COMPLEX
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Compound Patient search — gender AND family prefix. Tests whether the query planner AND's the predicates efficiently or evaluates one then filters the other in memory. Spark has historically returned odd entry counts on compound queries; note any anomaly in the expected field rather than "fixing" the query.
     path: Patient
@@ -227,6 +269,8 @@ queries:
     expected_spark:   "?"
 
   - name: observation_by_height
+    resource_type: Observation
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Observation by LOINC code 8302-2 (Body Height). Synthea seeds this observation on every patient, so the token index returns dense matches at every checkpoint — complements the existing 8480-6 query (which matches zero top-level because BP is in components).
     path: Observation
@@ -242,6 +286,8 @@ queries:
     expected_spark:   "?"
 
   - name: observation_by_weight
+    resource_type: Observation
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Observation by LOINC code 29463-7 (Body Weight). Another universally-seeded code — provides a second dense-match token query so observation-by-code is not a statistical sample of one.
     path: Observation
@@ -257,6 +303,8 @@ queries:
     expected_spark:   "?"
 
   - name: observation_by_pain
+    resource_type: Observation
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Observation by LOINC code 72514-3 (Pain severity). Not seeded on every patient — sparser token matches. Pairs with the dense height/weight codes to exercise high-selectivity vs low-selectivity index paths.
     path: Observation
@@ -272,6 +320,8 @@ queries:
     expected_spark:   "?"
 
   - name: observation_recent
+    resource_type: Observation
+    complexity: SIMPLE
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Observation date range (ge2020-01-01). The date-index path is distinct from token and string indexes on every server; heavily used by clinical UIs loading "recent" labs. Open-ended range so result sets track corpus size at each checkpoint.
     path: Observation
@@ -286,6 +336,8 @@ queries:
     expected_spark:   "?"
 
   - name: q2_history_type
+    resource_type: Patient
+    complexity: OPERATION
     blog_section: "Operations support is where the gap is biggest"
     description: Type-level history endpoint (Patient/_history). HAPI exposes it. GCP does not even recognize the URL pattern.
     path: Patient/_history
@@ -300,6 +352,8 @@ queries:
     expected_spark:   "200 — Bundle.total=278, 1 entry (Spark supports _history with full version count visible). Now five-of-seven supporting type-level history (HAPI, Aidbox, MS-FHIR, Blaze, Spark) vs two not (Medplum, GCP)."
 
   - name: q6_expand_valueset
+    resource_type: ValueSet
+    complexity: OPERATION
     blog_section: "Operations support is where the gap is biggest"
     description: $expand on a US Core ValueSet. The terminology operation that drives every clinical autocomplete picker for SNOMED, LOINC, ICD-10.
     path: ValueSet/$expand
@@ -315,6 +369,8 @@ queries:
     expected_spark:   "400 — Spark also returns 400 (no terminology loaded). Six servers, four distinct status code choices for 'operation exists but content not loaded': HAPI 404, Aidbox 404, Medplum 400, MS-FHIR 200+OperationOutcome, Blaze 400, Spark 400. GCP rejects the operation itself."
 
   - name: q6_lookup_loinc
+    resource_type: CodeSystem
+    complexity: OPERATION
     blog_section: "Operations support is where the gap is biggest"
     description: $lookup on the LOINC CodeSystem. The operation that fetches the display string for a coded value. Both fail, but for DIFFERENT reasons — that is the divergence the row demonstrates.
     path: CodeSystem/$lookup
@@ -330,6 +386,8 @@ queries:
     expected_spark:   "400 — Spark also returns 400. SIX SERVERS, FIVE STATUS CODES on this single query: HAPI 404, Aidbox 200 (mis-routed), Medplum 404, MS-FHIR 400, Blaze 400, Spark 400, GCP 400. The screenshot row of the post — terminology operations are the most divergent area in FHIR."
 
   - name: patient_revinclude_wildcard
+    resource_type: Patient
+    complexity: COMPLEX
     blog_section: "Search behavior diverges in ways you will not notice"
     description: Patient search with _revinclude=* (wildcard reverse-include). HAPI returns every resource that points at each patient. GCP rejects the wildcard.
     path: Patient
@@ -345,6 +403,8 @@ queries:
     expected_spark:   "500 — Spark errored on the wildcard (joins Aidbox in the wrong-status-for-client-error camp). Now four camps clearly defined: ACCEPT (HAPI + MS-FHIR + Blaze), REJECT-CLIENT-ERROR (Medplum + GCP), REJECT-SERVER-ERROR (Aidbox + Spark)."
 
   - name: patient_export
+    resource_type: Patient
+    complexity: OPERATION
     blog_section: "Bulk data support is uneven"
     description: Kick off a Patient-level $export (Bulk Data). Per the Bulk Data spec, a compliant server returns 202 Accepted with a Content-Location polling URL. Servers that don't implement Bulk Data return 400/404. This is a GET with the Prefer:respond-async header.
     path: Patient/$export
@@ -374,6 +434,8 @@ queries:
   # ----------------------------------------------------------------------
 
   - name: patient_read_by_id
+    resource_type: Patient
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Random Patient read-by-id. Fresh id per request so the server can't cache a hot set; measures the real GET-by-id path including index lookup and cache-miss costs.
@@ -382,6 +444,8 @@ queries:
       patient_id: patient_id
 
   - name: patient_by_family_exact
+    resource_type: Patient
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Patient search by exact family name, sampled from live corpus surnames. More realistic than a single-letter prefix — measures the name index under the shapes real clinical apps use when looking up a known patient.
@@ -393,6 +457,8 @@ queries:
       family: patient_family
 
   - name: observations_for_patient
+    resource_type: Observation
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: All Observations for a random patient — the single most common FHIR search in clinical UIs. Reference-param filter; exercises the Observation.subject/patient back-reference index.
@@ -404,6 +470,8 @@ queries:
       patient_id: patient_id
 
   - name: conditions_for_patient
+    resource_type: Condition
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Problem-list lookup — all Conditions for a random patient. Reference-param filter on Condition.subject/patient.
@@ -414,6 +482,8 @@ queries:
       patient_id: patient_id
 
   - name: condition_by_code
+    resource_type: Condition
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Condition search by SNOMED code, sampled from live corpus diagnoses. Token-index path on a different resource type than Observation — useful because Observation-by-code can dominate the aggregate otherwise.
@@ -425,6 +495,8 @@ queries:
       code: condition_code
 
   - name: procedure_by_code
+    resource_type: Procedure
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Procedure search by SNOMED code, sampled from live corpus procedures. Another token-on-non-Observation path for search-by-code coverage.
@@ -436,6 +508,8 @@ queries:
       code: procedure_code
 
   - name: encounter_by_patient
+    resource_type: Encounter
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Visit history — all Encounters for a random patient. Reference-param filter on Encounter.subject/patient, which on some servers is a distinct index from Observation/Condition back-refs.
@@ -447,6 +521,8 @@ queries:
       patient_id: patient_id
 
   - name: medication_request_by_patient
+    resource_type: MedicationRequest
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Medication list — all MedicationRequests for a random patient. Reference-param filter.
@@ -458,6 +534,8 @@ queries:
       patient_id: patient_id
 
   - name: encounter_by_practitioner
+    resource_type: Encounter
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Encounters for a random Practitioner — "show me every visit this physician participated in." Exercises the participant reference index, which is structurally different from the patient back-ref and often uses a different index.
@@ -469,6 +547,8 @@ queries:
       practitioner_id: practitioner_id
 
   - name: encounter_by_location
+    resource_type: Encounter
+    complexity: SIMPLE
     matrix: "skip:runtime_sampled"
     blog_section: "Search workload coverage"
     description: Encounters at a random Location — "what happened at this facility?" Exercises the location reference index.
@@ -478,3 +558,162 @@ queries:
       _count: "10"
     sample:
       location_id: location_id
+
+  # ----------------------------------------------------------------------
+  # Full-text search queries (complexity: FULL_TEXT).
+  #
+  # Added 2026-04-30 to give the load workload coverage of the third FHIR
+  # search class. The FHIR R4 spec defines THREE distinct full-text
+  # mechanisms — they index different surfaces and have different support:
+  #
+  #   _content   — searches the indexed *body* of the resource (every
+  #                searchable field). Requires a full-text backend
+  #                (Lucene/Elasticsearch on HAPI, token tables on Aidbox).
+  #                HAPI 8.x default config does NOT enable this — set
+  #                hapi.fhir.advanced_lucene_indexing=true.
+  #   _text      — searches only the resource *narrative* (Resource.text.div).
+  #                Lighter index than _content; some servers index only
+  #                _text and reject _content.
+  #   :text      — modifier on a specific search param. On a string param
+  #                (Patient.name, .address) it triggers a substring/contains
+  #                match against the indexed string column — does NOT need
+  #                a Lucene backend on most servers, so this is the most
+  #                universally-supported member of the class.
+  #
+  # Server support (as of HAPI 8.8 / Aidbox 2503 / Medplum 5.1 / MS-FHIR 4.0):
+  #   - HAPI:    Lucene-backed _content + _text + :text (with Lucene env vars
+  #              set in docker-compose.loadtest.yml; vanilla HAPI rejects
+  #              _content and :text on token params with HTTP 400).
+  #   - Aidbox:  token-table-backed _content (different perf profile)
+  #   - Medplum: partial — _content not indexed; :text on string params works
+  #   - MS-FHIR: added in v3+ (varies by deployment)
+  #   - Blaze:   varies — base spec doesn't require it
+  #   - Spark:   varies — base spec doesn't require it
+  #
+  # These queries are loadtest:include-by-default so cells where the
+  # server does not support a given mechanism surface as high err% in the
+  # trust gate and render desaturated — the same model used elsewhere. All
+  # are matrix:include so the behavior matrix records each server's
+  # response shape (200+results vs 4xx OperationOutcome vs silent-empty).
+  #
+  # The query mix exercises all three mechanisms so even servers without
+  # Lucene contribute non-empty signal to the FULL_TEXT class — :text on
+  # string params (universally supported) gives every server a survivor
+  # query, while _content / _text expose the indexing-backend gap.
+  #
+  # See plans/marat-from-health-samurai-wondrous-tome.md (Track C) for
+  # context: this scope expansion ships Simple/Complex/Full-Text class
+  # coverage before HealthSamurai's published roadmap does.
+  # ----------------------------------------------------------------------
+
+  - name: patient_content_search
+    resource_type: Patient
+    complexity: FULL_TEXT
+    blog_section: "Search workload coverage"
+    description: _content full-text search on Patient. HAPI uses Lucene; Aidbox uses token tables; Medplum/MS-FHIR/Blaze/Spark vary. Surfaces real per-server divergence in full-text support.
+    path: Patient
+    params:
+      _content: Smith
+      _count: "5"
+    expected_hapi:    "?"
+    expected_aidbox:  "?"
+    expected_medplum: "?"
+    expected_msfhir:  "?"
+    expected_blaze:   "?"
+    expected_spark:   "?"
+
+  - name: observation_content_search
+    resource_type: Observation
+    complexity: FULL_TEXT
+    blog_section: "Search workload coverage"
+    description: _content full-text search on Observation. Tests whether the server indexes Observation.code.text + valueString into the full-text path.
+    path: Observation
+    params:
+      _content: blood
+      _count: "5"
+    expected_hapi:    "?"
+    expected_aidbox:  "?"
+    expected_medplum: "?"
+    expected_msfhir:  "?"
+    expected_blaze:   "?"
+    expected_spark:   "?"
+
+  - name: condition_content_search
+    resource_type: Condition
+    complexity: FULL_TEXT
+    blog_section: "Search workload coverage"
+    description: _content full-text search on Condition. Indexed surfaces include code.text, code.coding.display, and note.text on most servers.
+    path: Condition
+    params:
+      _content: hypertension
+      _count: "5"
+    expected_hapi:    "?"
+    expected_aidbox:  "?"
+    expected_medplum: "?"
+    expected_msfhir:  "?"
+    expected_blaze:   "?"
+    expected_spark:   "?"
+
+  - name: patient_name_text_modifier
+    resource_type: Patient
+    complexity: FULL_TEXT
+    blog_section: "Search workload coverage"
+    description: name:text modifier — substring search inside name fields. Distinct from name= (prefix) and name:contains= (case-insensitive contains). The :text modifier is the FHIR R4 spec way to ask for full-text behavior on a string field.
+    path: Patient
+    params:
+      "name:text": "ohn"
+      _count: "5"
+    expected_hapi:    "?"
+    expected_aidbox:  "?"
+    expected_medplum: "?"
+    expected_msfhir:  "?"
+    expected_blaze:   "?"
+    expected_spark:   "?"
+
+  - name: patient_address_text_modifier
+    resource_type: Patient
+    complexity: FULL_TEXT
+    blog_section: "Search workload coverage"
+    description: address:text modifier — substring search inside the indexed address string. Same mechanism as name:text but exercises a different string-class param so the FULL_TEXT class isn't carried by a single index path on each server.
+    path: Patient
+    params:
+      "address:text": "Boston"
+      _count: "5"
+    expected_hapi:    "?"
+    expected_aidbox:  "?"
+    expected_medplum: "?"
+    expected_msfhir:  "?"
+    expected_blaze:   "?"
+    expected_spark:   "?"
+
+  - name: patient_text_narrative
+    resource_type: Patient
+    complexity: FULL_TEXT
+    blog_section: "Search workload coverage"
+    description: _text narrative full-text search. Distinct from _content (resource-body) — _text only indexes Resource.text.div (the human-readable narrative). Some servers index only one or the other, so this query separates "narrative-indexed" from "body-indexed" support.
+    path: Patient
+    params:
+      _text: Smith
+      _count: "5"
+    expected_hapi:    "?"
+    expected_aidbox:  "?"
+    expected_medplum: "?"
+    expected_msfhir:  "?"
+    expected_blaze:   "?"
+    expected_spark:   "?"
+
+  - name: condition_code_text_modifier
+    resource_type: Condition
+    complexity: FULL_TEXT
+    blog_section: "Search workload coverage"
+    description: code:text modifier on a token param. Per FHIR R4 spec, :text on a token parameter matches against CodeableConcept.text and Coding.display (the human-readable strings inside the code). Requires Lucene on HAPI; supported natively on most token-table-backed servers.
+    path: Condition
+    params:
+      "code:text": "hypertensive"
+      _count: "5"
+    expected_hapi:    "?"
+    expected_aidbox:  "?"
+    expected_medplum: "?"
+    expected_msfhir:  "?"
+    expected_blaze:   "?"
+    expected_spark:   "?"

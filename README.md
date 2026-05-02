@@ -71,7 +71,7 @@ Two additional rows are observed at **load time** rather than query time:
 
 ## Load test (multi-patient performance matrix)
 
-The 1-patient behavioral matrix above lives next to a separate, larger test that ingests N Synthea patients and measures ops/sec, p99 latency, CPU, memory, and disk per server — mirroring the Health Samurai "Performance at Scale" methodology (1K → 100K → +1K incremental, CRUD + Batch + Search workloads).
+The 1-patient behavioral matrix above lives next to a separate, larger test that ingests N Synthea patients and measures throughput, p50 / p95 / p99 latency, CPU, memory, and disk per server — mirroring the Health Samurai "Performance at Scale" methodology (1K → 4K → 16K → 64K checkpoint ladder, CRUD + Search + Ingest workloads).
 
 The load-test stack is an overlay: HAPI switches from H2 to a dedicated Postgres, every server container gets an equal resource budget, and image digests are pinned for reproducibility.
 
@@ -79,11 +79,17 @@ The load-test stack is an overlay: HAPI switches from H2 to a dedicated Postgres
 # 10-patient smoke test — exercises every piece in ~2 minutes
 make loadtest-dryrun
 
-# Full ramp to 50K patients across all 7 servers (~12–16h elapsed)
+# Full ramp to 50K patients across all 6 servers (~12–16h elapsed)
 make loadtest-ramp-50k
 ```
 
-See `src/fhirbench/harness/` for the ingest loader, CRUD + search workload drivers, docker-stats resource sampler, stage orchestrator, and report generator. The search workload fires 23 queries uniformly at random per request, spanning seven FHIR routes (Patient, Observation, Condition, Procedure, Encounter, MedicationRequest, metadata) and eight filter shapes (token, string prefix, string exact, compound AND, date range, reference by patient / practitioner / location, and direct read-by-id). Ten of the queries are "runtime-sampled": their parameter values (patient ids, family names, diagnosis/procedure codes, practitioner and location ids) are drawn fresh per request from pools harvested against the target server at workload-start, so the numbers reflect cache-miss behavior on a live corpus rather than a hot 5-patient set. Per-query p50/p95/p99 is preserved in `evidence[].per_verb[]` in the round artifact. Results land under `results/loadtest/<run-id>/` as JSONL + a `summary.md` headline matrix.
+See `src/fhirbench/harness/` for the ingest loader, CRUD + search workload drivers (k6), docker-stats resource sampler, ramp orchestrator, and report generator. Three workloads run per checkpoint:
+
+- **CRUD** — symmetric C/R/U/D over five FHIR resource types (Patient / Observation / Condition / Encounter / MedicationRequest), 64 concurrent workers, weighted verb mix `C:10 R:60 U:25 D:5`. Every k6 metric is tagged with both `verb` (single letter) and `resource_type` so the round artifact can split by `(verb × type)`.
+- **Search** — 30 queries spanning seven FHIR routes and four search classes (Simple / Complex / Full-Text / Operation), driven concurrently. Each query carries a `complexity` tag that flows through to `per_verb[].complexity` in the round artifact, so the published heatmap can split by class. Seventeen of the 30 queries are runtime-sampled: their parameter values (patient ids, family names, diagnosis/procedure/medication codes, practitioner and location ids) are drawn fresh per request from pools harvested against the target server at workload-start, so the numbers reflect cache-miss behavior on a live corpus rather than a hot 5-patient set.
+- **Ingest** — transaction Bundle POST throughput. Headline metric is bundles/sec (not per-bundle latency, because Synthea bundles vary 10× in entry count).
+
+Per-query p50/p95/p99 is preserved in `evidence[].per_verb[]` in the round artifact, with optional `resource_type` and `complexity` dimensions on every row (added 2026-04-30 — see `docs/benchmark-methodology.md#per-verb-dimensions`). Results land under `results/loadtest/<run-id>/` as JSONL + a `summary.md` headline matrix.
 
 ## Conformance matrix
 
@@ -103,7 +109,7 @@ make conformance-validate  # schema-check the round artifact
 | `Makefile` | Public entry points. `make help` lists every target. |
 | `docker-compose.yml` | Brings up all 6 servers + their deps (images pinned by sha256). |
 | `config/servers.yaml` | Per-server `base_url` + auth shape. Add a server by appending a block. |
-| `config/queries.yaml` | 29 hand-picked queries with `expected_<server>` annotations per column (plus 10 runtime-sampled load-only entries). |
+| `config/queries.yaml` | Hand-picked queries with per-server `expected_<server>` annotations, plus `complexity` (SIMPLE / COMPLEX / FULL_TEXT / OPERATION) and `resource_type` tags consumed by the load-test harness. |
 | `config/medplum.config.json`, `config/medplum-lb.conf` | Medplum server + nginx LB config. |
 | `src/fhirbench/servers.py` | Shared config loader + auth shim used by every entry point. |
 | `src/fhirbench/compare.py` | Probes servers, authenticates, loops queries, prints the matrix (`python -m fhirbench.compare`). |
@@ -114,7 +120,8 @@ make conformance-validate  # schema-check the round artifact
 | `src/fhirbench/publish/` | Copies round artifacts into the `fhir-studio` frontend. |
 | `src/fhirbench/cli/` | One-off CLI runners (k6 context emitter, harness diff, version fetcher). |
 | `src/fhirbench/k6/` | k6 JavaScript harness + Python NDJSON post-processor. |
-| `profiles/benchmark/`, `profiles/conformance/` | Workload profiles (YAML) consumed by the harness. |
+| `profiles/benchmark/` | Workload profiles (`crud.yaml`, `search.yaml`, `ingest.yaml`). Each declares `id`, `label`, `headline_metric` (defaults to `p50_ms`; Ingest sets `ops_per_s`), and a 1-3 sentence scope statement that surfaces in the matrix tooltip. |
+| `profiles/conformance/` | Per-profile MUST/SHOULD/MAY rules for the conformance matrix. |
 | `conformance/testscripts/` | FHIR TestScripts (one JSON per test) per profile / requirement bucket. |
 | `docs/benchmark-methodology.md`, `docs/conformance-methodology.md` | Methodology — shipped to fhir-studio on every publish. |
 | `docker/` | Dockerfile bundles (conformance-services, spark-mongo-init). Compose files stay at root. |

@@ -1,0 +1,32 @@
+id: ingest
+label: Ingest
+version: v1
+spec_url: /performance/methodology#ingest
+status: active
+headline_metric: ops_per_s
+description: |
+  Transaction Bundle POST throughput. Each Synthea bundle is a single
+  POST against the base URL with a transaction-type Bundle in the body
+  (typically 50–500 entries per bundle). Headline metric is **bundles
+  per second** — the rate a server can apply transaction Bundles
+  back-to-back during ramp ingestion.
+
+  Why this matters: HL7v2→FHIR conversion pipelines turn each inbound
+  HL7v2 message into one transaction Bundle of correlated mutations
+  (Patient + Encounter + Observation + …). Bundles/sec is what those
+  pipelines actually feel. Suggested by Ralph at haste.health.
+
+  Loader: src/fhirbench/harness/loader.py runs 32 worker threads POSTing
+  each bundle to {base}/. Per-bundle latency + per-entry status are
+  captured in ingest.jsonl. p50/p95/p99 latencies remain available as
+  tail evidence in the per-cell summary, but the headline cell value
+  is throughput, not latency — bundles vary 10× in entry count, so
+  per-bundle latency is a function of bundle size as much as server
+  speed; throughput normalizes that.
+
+  $import is the spec-blessed bulk-load path for cold-start migrations
+  and is not what this workload measures. Transaction Bundles are the
+  interactive write path real pipelines hit on every inbound HL7v2
+  message — that's the workload published here.
+buckets:
+  - MAY
