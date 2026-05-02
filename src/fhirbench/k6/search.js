@@ -180,11 +180,21 @@ export default function (data) {
   const url = buildUrl(server.base_url, q);
   const headers = serverHeaders(server, q.headers || {});
 
-  // `tags: { verb }` here propagates onto k6's built-in http_req_duration
+  // `tags: { ... }` here propagates onto k6's built-in http_req_duration
   // samples — postprocess.py reads those (they're auto-tagged with status,
   // method, url, etc.) rather than our custom trend, so verb + status land
   // on every sample without a second metric stream.
-  const reqTags = { verb: q.name };
+  //
+  // resource_type and complexity are populated from queries.yaml via
+  // emit_k6_context.py. They flow into the published per_verb breakdown
+  // so the heatmap can drill by (verb × resource_type × complexity).
+  // Missing fields land as undefined in the tag — postprocess.py treats
+  // that as None for backward-compat with pre-2026-04-30 NDJSON.
+  const reqTags = {
+    verb: q.name,
+    resource_type: q.resource_type,
+    complexity: q.complexity,
+  };
   const t0 = Date.now();
   let resp;
   if (q.method === 'POST') {

@@ -1,20 +1,29 @@
-// CRUD workload — port of fhirbench/harness/workload_crud.py (mix mode).
+// CRUD workload — symmetric C/R/U/D across five FHIR resource types.
 //
-// 64 VUs drive a weighted mix (C:10, R:60, U:25, D:5 — match the Python
-// default) against the server identified by K6_SERVER for
-// WORKLOAD_DURATION seconds (default 900 = 15 min). Each op's latency +
-// status is tagged into the `crud_latency` Trend so handleSummary /
-// `--out json` can reconstitute per-op records matching the Python
-// harness's crud.jsonl shape.
+// 64 VUs drive a weighted verb mix (C:10, R:60, U:25, D:5 — match the
+// Python default) against the server identified by K6_SERVER for
+// WORKLOAD_DURATION seconds (default 900 = 15 min). Within each verb
+// invocation a resource type is sampled by an independent weight mix
+// (Observation 50%, Patient 20%, Condition 15%, Encounter 10%,
+// MedicationRequest 5%) so every (verb × type) cell gets exercised.
+//
+// History: v1 of this workload was Observation-only for Create/Delete and
+// Patient-only for Update — Marat Surmashev (Health Samurai) flagged this
+// as a methodology gap because Medplum (and likely other servers) shows
+// per-resource-type latency deviation that the verb-only breakdown hides.
+// The aggregate verb-only baseline still rolls up the same way (so prior
+// CRUD p50/p99 numbers remain directly comparable), but the published
+// per_verb evidence array now also carries a resource_type tag so the
+// heatmap drill-down can split by (verb × type). See
+// plans/marat-from-health-samurai-wondrous-tome.md (Track A).
 //
 // Pool coordination: k6 VUs share the JS runtime in-process but each VU
-// iteration is independent. For the Create/Delete pair we use a module-
-// scoped array protected by the fact that VU iterations are synchronous
-// within a VU — module state *is* shared across VUs in k6 (as of v0.40+).
-// A lightweight mutex isn't possible in goja but push/shift are atomic
-// enough for this pattern: the worst case is a Delete and a Create racing
-// on the same slot, which results in a duplicate attempt or a miss, both
-// of which are accounted for correctly in the error tally.
+// iteration is independent. For the Create/Delete pair we use a per-type
+// CREATED_POOL keyed by resource type. Module state is shared across VUs
+// in k6 (as of v0.40+); a goja-level mutex isn't possible but push/shift
+// are atomic enough for this pattern. Worst case a Delete and a Create
+// race on the same slot, which produces a duplicate attempt or a miss —
+// both are accounted for correctly in the error tally.
 //
 // Env inputs:
 //   K6_SERVER            — server id from servers.yaml (required)
@@ -22,25 +31,40 @@
 //                          ./src/fhirbench/k6/k6_context.json)
 //   WORKLOAD_DURATION    — seconds, default 900
 //   WORKERS              — VU count, default 64
-//   CRUD_MIX             — 'C:10,R:60,U:25,D:5' (default)
-//   HARVEST_TARGET       — cap patient pool at N (default: unbounded)
+//   CRUD_MIX             — verb weights, e.g. 'C:10,R:60,U:25,D:5' (default)
+//   CRUD_TYPE_MIX        — resource-type weights, e.g.
+//                          'Observation:50,Patient:20,Condition:15,
+//                           Encounter:10,MedicationRequest:5' (default).
+//                          Set to 'Observation:100' to reproduce the v1
+//                          single-type behavior for back-comparison.
+//   HARVEST_TARGET       — cap Patient pool at N (default: unbounded);
+//                          non-Patient pools always cap at the harvest
+//                          library's CRUD_NONPATIENT_POOL_CAP (5000).
 //
 // Output:
 //   --out json=<path>    — k6 raw NDJSON, one line per sample. Consumed
-//                          by src/fhirbench/k6/postprocess.py to produce the
-//                          crud.jsonl the rest of the Python pipeline
-//                          understands.
+//                          by src/fhirbench/k6/postprocess.py to produce
+//                          crud.jsonl. Postprocess pulls the verb +
+//                          resource_type tags off each sample so the
+//                          downstream cell_summary aggregator can group
+//                          by (verb, resource_type).
 
 import http from 'k6/http';
 import { Trend, Counter } from 'k6/metrics';
-import { SharedArray } from 'k6/data';
 import { targetServer, serverHeaders, workloadDuration, workers } from './lib/context.js';
-import { harvestPatientIds } from './lib/harvest.js';
-import { pickTemplate, TEMPLATES } from './lib/update_templates.js';
+import { harvestCrudReadPools } from './lib/harvest.js';
+import { pickTemplate, TEMPLATES_BY_TYPE } from './lib/update_templates.js';
 
 const server = targetServer();
 const MIX = parseMix(__ENV.CRUD_MIX || 'C:10,R:60,U:25,D:5');
+const TYPE_MIX = parseMix(__ENV.CRUD_TYPE_MIX
+  || 'Observation:50,Patient:20,Condition:15,Encounter:10,MedicationRequest:5');
 const HARVEST_TARGET = __ENV.HARVEST_TARGET ? Number(__ENV.HARVEST_TARGET) : null;
+
+// The five types CRUD exercises. Order matters only for log readability;
+// dispatch is by name. Must match keys in TEMPLATES_BY_TYPE
+// (update_templates.js) and harvestCrudReadPools (harvest.js).
+const CRUD_TYPES = ['Patient', 'Observation', 'Condition', 'Encounter', 'MedicationRequest'];
 
 // ----------------------------------------------------------------------
 // k6 options — matches the Python harness shape (64 VUs, fixed duration).
@@ -55,13 +79,9 @@ export const options = {
       gracefulStop: '30s',
     },
   },
-  // No k6 thresholds here — the trust-gate lives in the post-run summary
-  // (buildTrust in lib/trust.js) so it's consistent with the Python
-  // harness. A k6 threshold would have made this cell a pass/fail, which
-  // isn't the model.
-  // setup() paginates Patient ids (_count=200); at 64K+ patients that's
-  // 300+ sequential GETs and k6's default 60s setupTimeout trips well
-  // before harvest finishes. Matches the cap in search.js.
+  // setup() paginates ids for 5 types; each can take dozens of seconds at
+  // 64K+ records. k6's default 60s setupTimeout trips well before harvest
+  // finishes. Same generous cap as search.js.
   setupTimeout: '30m',
   noConnectionReuse: false,
   summaryTrendStats: ['min', 'med', 'avg', 'max', 'p(90)', 'p(95)', 'p(99)'],
@@ -69,104 +89,196 @@ export const options = {
 };
 
 // ----------------------------------------------------------------------
-// Custom metrics. The default http_req_duration is tagged automatically,
-// but we want a metric we own so the shape is obvious downstream.
+// Custom metrics. The default http_req_duration is auto-tagged, but we
+// keep an owned trend so the shape is obvious downstream.
 // ----------------------------------------------------------------------
 
 const crudLatency = new Trend('crud_latency_ms', true);
 const crudErrors = new Counter('crud_errors');
 
 // ----------------------------------------------------------------------
-// Setup — runs once before VUs start. Harvests patient ids, returns them
-// to every VU as `data`.
+// Setup — runs once before VUs start. Harvests per-type id pools and
+// returns them to every VU as `data.pools`.
 // ----------------------------------------------------------------------
 
 export function setup() {
-  console.log(`CRUD workload on ${server.id}: duration=${workloadDuration()}s ` +
-    `workers=${workers()} mix=${JSON.stringify(MIX)}`);
+  console.log(
+    `CRUD workload on ${server.id}: duration=${workloadDuration()}s ` +
+    `workers=${workers()} verb_mix=${JSON.stringify(MIX)} ` +
+    `type_mix=${JSON.stringify(TYPE_MIX)}`,
+  );
   const t0 = Date.now();
-  const pids = harvestPatientIds(server, HARVEST_TARGET);
-  if (!pids.length) {
+  const pools = harvestCrudReadPools(server, HARVEST_TARGET);
+  if (!(pools.Patient || []).length) {
     throw new Error(
       'Could not harvest any Patient ids. Did ingest run against ' +
       `${server.id}? (base_url=${server.base_url})`,
     );
   }
-  const cap = HARVEST_TARGET == null ? 'unbounded' : `capped at ${HARVEST_TARGET}`;
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
-  console.log(`  harvested ${pids.length.toLocaleString()} patient ids (${cap}) in ${dt}s`);
-  return { pids };
+  const cap = HARVEST_TARGET == null ? 'unbounded' : `Patient capped at ${HARVEST_TARGET}`;
+  console.log(`  ready in ${dt}s — ${cap}`);
+  return { pools };
 }
 
 // ----------------------------------------------------------------------
-// Shared Create pool — module-scoped array accessible to every VU.
-// k6 (goja) keeps module state in one JS runtime so this Just Works.
+// Per-type create pool — module-scoped object accessible to every VU.
+// Each Delete picks from the bucket matching the type it sampled; if
+// that bucket is empty we fall back to a Read (same pattern as v1).
 // ----------------------------------------------------------------------
 
-const CREATED_POOL = [];
-const CREATED_POOL_MAX = 100_000;
-
-// Track D-fallback-to-R the same way the Python harness does.
-// record.note === 'fallback_from_D'.
+const CREATED_POOL = Object.fromEntries(CRUD_TYPES.map(t => [t, []]));
+// Per-type cap — distributes the 100K total budget across 5 types so a
+// long-running Observation-heavy workload doesn't starve the other types.
+const CREATED_POOL_MAX_PER_TYPE = 20_000;
 
 // ----------------------------------------------------------------------
-// Op implementations — one HTTP call each except U which is GET + PUT.
-// Return shape: { ms, status, ok, note, newId }. newId is only set on
-// successful create; caller pushes it into CREATED_POOL.
+// Create templates — one minimal-but-valid payload per resource type.
+// Each consumes a Patient id (`pid`) and returns a fresh body object.
+// Payloads are deliberately minimal to keep validation friendly across
+// HAPI / Aidbox / Medplum / MS-FHIR / Blaze / Spark; do not add fields
+// any one server's profile gate would reject.
 // ----------------------------------------------------------------------
 
-const OBS_TEMPLATE = {
-  resourceType: 'Observation',
-  status: 'final',
-  code: {
-    coding: [{
-      system: 'http://loinc.org',
-      code: '8310-5',
-      display: 'Body temperature',
-    }],
-    text: 'Body temperature',
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function rndInt(n) {
+  return Math.floor(Math.random() * n);
+}
+
+const CREATE_TEMPLATES = {
+  Patient: (_pid) => ({
+    resourceType: 'Patient',
+    // Synthetic family + given so concurrent creates don't collide on any
+    // server with an active uniqueness constraint.
+    name: [{ family: `LoadTest${Date.now()}-${rndInt(1_000_000)}`, given: ['Smoke'] }],
+    gender: ['male', 'female', 'other', 'unknown'][rndInt(4)],
+    birthDate: '1990-01-01',
+  }),
+  Observation: (pid) => ({
+    resourceType: 'Observation',
+    status: 'final',
+    code: {
+      coding: [{
+        system: 'http://loinc.org',
+        code: '8310-5',
+        display: 'Body temperature',
+      }],
+      text: 'Body temperature',
+    },
+    subject: { reference: `Patient/${pid}` },
+    effectiveDateTime: nowIso(),
+    valueQuantity: {
+      value: 37.0, unit: 'C',
+      system: 'http://unitsofmeasure.org', code: 'Cel',
+    },
+  }),
+  Condition: (pid) => ({
+    resourceType: 'Condition',
+    clinicalStatus: {
+      coding: [{
+        system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+        code: 'active',
+      }],
+    },
+    verificationStatus: {
+      coding: [{
+        system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status',
+        code: 'confirmed',
+      }],
+    },
+    code: {
+      coding: [{
+        system: 'http://snomed.info/sct',
+        code: '38341003',
+        display: 'Hypertensive disorder',
+      }],
+      text: 'Hypertension (load test)',
+    },
+    subject: { reference: `Patient/${pid}` },
+    onsetDateTime: nowIso(),
+  }),
+  Encounter: (pid) => {
+    const start = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const end = nowIso();
+    return {
+      resourceType: 'Encounter',
+      status: 'finished',
+      class: {
+        system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode',
+        code: 'AMB',
+        display: 'ambulatory',
+      },
+      subject: { reference: `Patient/${pid}` },
+      period: { start, end },
+    };
   },
-  valueQuantity: {
-    value: 37.0, unit: 'C',
-    system: 'http://unitsofmeasure.org', code: 'Cel',
-  },
+  MedicationRequest: (pid) => ({
+    resourceType: 'MedicationRequest',
+    status: 'active',
+    intent: 'order',
+    medicationCodeableConcept: {
+      coding: [{
+        system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+        code: '314076',
+        display: 'lisinopril 10 MG Oral Tablet',
+      }],
+      text: 'lisinopril 10 mg PO daily',
+    },
+    subject: { reference: `Patient/${pid}` },
+    authoredOn: nowIso(),
+  }),
 };
 
-// The per-call `tags` option propagates onto k6's built-in
-// http_req_duration sample — postprocess.py reads THAT stream (which is
-// auto-tagged with status by k6), so `verb` needs to travel with it.
-// Without the tag, postprocess sees "status": "200" but can't tell which
-// verb the sample came from, and collapses all of CRUD into one bucket.
-function doRead(pid) {
-  const t0 = Date.now();
-  const resp = http.get(`${server.base_url}/Patient/${pid}`, {
-    headers: serverHeaders(server),
-    timeout: '60s',
-    tags: { verb: 'R' },
-  });
-  return toRecord(t0, resp);
+// Sanity-check the registry at module load: every CRUD_TYPE must have a
+// create template AND an update mutator group. A typo here is the kind
+// of bug that would silently degrade a published run, so fail loud.
+for (const t of CRUD_TYPES) {
+  if (!CREATE_TEMPLATES[t]) {
+    throw new Error(`crud.js: no CREATE_TEMPLATE for ${t}`);
+  }
+  if (!TEMPLATES_BY_TYPE[t]) {
+    throw new Error(`crud.js: no update mutator group for ${t} in update_templates.js`);
+  }
 }
 
-function doReadObs(obsId) {
-  const t0 = Date.now();
-  const resp = http.get(`${server.base_url}/Observation/${obsId}`, {
-    headers: serverHeaders(server),
-    timeout: '60s',
-    tags: { verb: 'R' },
-  });
-  return toRecord(t0, resp);
+// ----------------------------------------------------------------------
+// Op implementations.
+//
+// Every k6 metric is tagged with both `verb` (single letter C/R/U/D)
+// AND `resource_type` (the FHIR type just operated on). postprocess.py
+// reads both tags off http_req_duration to produce the JSONL the
+// downstream cell_summary aggregator groups by (verb, resource_type).
+// ----------------------------------------------------------------------
+
+function urlFor(type, id) {
+  if (id == null) return `${server.base_url}/${type}`;
+  return `${server.base_url}/${type}/${id}`;
 }
 
-function doCreate(pid) {
-  const body = JSON.parse(JSON.stringify(OBS_TEMPLATE));
-  body.subject = { reference: `Patient/${pid}` };
+function doRead(type, id) {
   const t0 = Date.now();
-  const resp = http.post(`${server.base_url}/Observation`, JSON.stringify(body), {
+  const tags = { verb: 'R', resource_type: type };
+  const resp = http.get(urlFor(type, id), {
     headers: serverHeaders(server),
     timeout: '60s',
-    tags: { verb: 'C' },
+    tags,
   });
-  const rec = toRecord(t0, resp);
+  return finishRecord(t0, resp, tags);
+}
+
+function doCreate(type, pid) {
+  const body = CREATE_TEMPLATES[type](pid);
+  const t0 = Date.now();
+  const tags = { verb: 'C', resource_type: type };
+  const resp = http.post(urlFor(type, null), JSON.stringify(body), {
+    headers: serverHeaders(server),
+    timeout: '60s',
+    tags,
+  });
+  const rec = finishRecord(t0, resp, tags);
   if (rec.ok) {
     try {
       const parsed = resp.json();
@@ -176,63 +288,79 @@ function doCreate(pid) {
   return rec;
 }
 
-function doUpdate(pid) {
-  const { tid, fn } = pickTemplate();
+function doUpdate(type, id) {
+  const { tid, fn } = pickTemplate(type);
   const t0 = Date.now();
-  const uTags = { verb: 'U', template: tid };
-  const g = http.get(`${server.base_url}/Patient/${pid}`, {
+  const tags = { verb: 'U', resource_type: type, template: tid };
+  const g = http.get(urlFor(type, id), {
     headers: serverHeaders(server),
     timeout: '60s',
-    tags: uTags,
+    tags,
   });
   if (g.status < 200 || g.status >= 300) {
     const ms = Date.now() - t0;
+    crudErrors.add(1);
+    crudLatency.add(ms, tags);
     return { ms, status: g.status, ok: false, note: tid };
   }
-  let patient;
+  let resource;
   try {
-    patient = g.json();
+    resource = g.json();
   } catch {
     const ms = Date.now() - t0;
+    crudErrors.add(1);
+    crudLatency.add(ms, tags);
     return { ms, status: g.status, ok: false, note: tid };
   }
-  patient = fn(patient);
-  const p = http.put(
-    `${server.base_url}/Patient/${pid}`,
-    JSON.stringify(patient),
-    { headers: serverHeaders(server), timeout: '60s', tags: uTags },
-  );
+  resource = fn(resource);
+  const p = http.put(urlFor(type, id), JSON.stringify(resource), {
+    headers: serverHeaders(server),
+    timeout: '60s',
+    tags,
+  });
   const ms = Date.now() - t0;
   const ok = p.status >= 200 && p.status < 300;
   if (!ok) crudErrors.add(1);
-  crudLatency.add(ms, uTags);
+  crudLatency.add(ms, tags);
   return { ms, status: p.status, ok, note: tid };
 }
 
-function doDelete(obsId) {
+function doDelete(type, id) {
   const t0 = Date.now();
-  const resp = http.del(`${server.base_url}/Observation/${obsId}`, null, {
+  const tags = { verb: 'D', resource_type: type };
+  const resp = http.del(urlFor(type, id), null, {
     headers: serverHeaders(server),
     timeout: '60s',
-    tags: { verb: 'D' },
+    tags,
   });
   const ms = Date.now() - t0;
   // 2xx OR 404 both count as "gone" — matches Python.
   const ok = (resp.status >= 200 && resp.status < 300) || resp.status === 404;
   if (!ok) crudErrors.add(1);
+  crudLatency.add(ms, tags);
   return { ms, status: resp.status, ok };
 }
 
-function toRecord(t0, resp) {
+function finishRecord(t0, resp, tags) {
   const ms = Date.now() - t0;
   const ok = resp.status >= 200 && resp.status < 300;
   if (!ok) crudErrors.add(1);
+  crudLatency.add(ms, tags);
   return { ms, status: resp.status, ok };
 }
 
+// Pool sampler: returns null when the pool is empty so callers can fall
+// back to Patient. Avoids accidentally indexing an empty array (k6's
+// goja returns undefined which would then serialize "undefined" into a
+// URL — silent corruption).
+function sampleId(pool) {
+  if (!pool || !pool.length) return null;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 // ----------------------------------------------------------------------
-// Default function — one iteration = one op. The VU loop picks a verb
-// from MIX, invokes the op, logs latency + status.
+// Default function — one iteration = one op. Independently weighted
+// verb + resource_type sampling.
 // ----------------------------------------------------------------------
 
 // k6's default text-summary generator crashes on certain metric shapes.
@@ -244,58 +372,84 @@ export function handleSummary() {
 }
 
 export default function (data) {
-  const pids = data.pids;
+  const pools = data.pools;
   const verb = weightedChoice(MIX);
+  const type = weightedChoice(TYPE_MIX);
   const startedAt = Date.now() / 1000;
 
   if (verb === 'R') {
-    const pid = pids[Math.floor(Math.random() * pids.length)];
-    const r = doRead(pid);
-    crudLatency.add(r.ms, { verb: 'R' });
+    const id = sampleId(pools[type]) || sampleId(pools.Patient);
+    const fallbackType = (sampleId(pools[type]) == null) ? 'Patient' : type;
+    // Re-sample to avoid using the side-effect-free check above's id when
+    // the pool was non-empty: simpler is to recompute once.
+    const realId = sampleId(pools[fallbackType]);
+    if (realId == null) {
+      // Patient pool itself is empty — should never happen because setup()
+      // throws, but be defensive.
+      return;
+    }
+    const r = doRead(fallbackType, realId);
     emit('R', startedAt, r);
     return;
   }
+
   if (verb === 'C') {
-    const pid = pids[Math.floor(Math.random() * pids.length)];
-    const r = doCreate(pid);
-    crudLatency.add(r.ms, { verb: 'C' });
+    const pid = sampleId(pools.Patient);
+    if (pid == null) return;
+    const r = doCreate(type, pid);
     if (r.ok && r.newId) {
-      if (CREATED_POOL.length < CREATED_POOL_MAX) CREATED_POOL.push(r.newId);
+      const bucket = CREATED_POOL[type];
+      if (bucket && bucket.length < CREATED_POOL_MAX_PER_TYPE) {
+        bucket.push(r.newId);
+      }
     }
     emit('C', startedAt, r);
     return;
   }
+
   if (verb === 'U') {
-    const pid = pids[Math.floor(Math.random() * pids.length)];
-    const r = doUpdate(pid);
+    let updateType = type;
+    let id = sampleId(pools[updateType]);
+    if (id == null) {
+      // Type pool empty — fall back to Patient so the workload doesn't idle.
+      updateType = 'Patient';
+      id = sampleId(pools.Patient);
+    }
+    if (id == null) return;
+    const r = doUpdate(updateType, id);
     emit('U', startedAt, r);
     return;
   }
+
   if (verb === 'D') {
-    const oid = CREATED_POOL.shift();
+    const bucket = CREATED_POOL[type];
+    const oid = bucket ? bucket.shift() : null;
     if (oid == null) {
-      // Fallback to R so we don't idle — Python does the same thing.
-      const pid = pids[Math.floor(Math.random() * pids.length)];
-      const r = doRead(pid);
-      crudLatency.add(r.ms, { verb: 'R', note: 'fallback_from_D' });
+      // Fall back to R so we don't idle — matches v1 fallback_from_D
+      // behavior. Falls back to Patient since that's the universally
+      // populated read pool.
+      const pid = sampleId(pools.Patient);
+      if (pid == null) return;
+      const r = doRead('Patient', pid);
       emit('R', startedAt, { ...r, note: 'fallback_from_D' });
       return;
     }
-    const r = doDelete(oid);
-    crudLatency.add(r.ms, { verb: 'D' });
+    const r = doDelete(type, oid);
     emit('D', startedAt, r);
   }
 }
 
 // ----------------------------------------------------------------------
-// Helpers: mix parser + weighted choice + JSONL-style emit.
+// Helpers: mix parser + weighted choice + JSONL-style emit hook.
 // ----------------------------------------------------------------------
 
+// Parse 'A:10,B:20,C:5' into a normalized weight map { A: 0.286, B: 0.571, C: 0.143 }.
+// Used for both verb mix (single-letter keys) and type mix (resourceType keys).
 function parseMix(spec) {
   const out = {};
   for (const part of spec.split(',')) {
     const [k, v] = part.split(':');
-    if (k && v) out[k.trim().toUpperCase()] = Number(v.trim());
+    if (k && v) out[k.trim()] = Number(v.trim());
   }
   const total = Object.values(out).reduce((a, b) => a + b, 0) || 1;
   for (const k of Object.keys(out)) out[k] = out[k] / total;
@@ -312,14 +466,10 @@ function weightedChoice(weights) {
   return Object.keys(weights).slice(-1)[0];
 }
 
-// `emit` tags the k6 http_req* samples so postprocess.py can pull them
-// out of the raw NDJSON and assemble the Python-harness crud.jsonl
-// shape. We don't write JSONL directly because k6's JS runtime has no
-// durable file-write API — we rely on `--out json=` for that.
+// Hook left in for symmetry with the Python harness's emit_op_record. All
+// metric tagging happens inside doRead/doCreate/doUpdate/doDelete; this
+// function is a no-op that exists so future extensions (e.g. a V phase
+// or a phase-state side-channel) have a single place to point at.
 function emit(verb, startedAt, r) {
-  // Nothing to do here beyond what crudLatency.add already tagged —
-  // but this function exists so postprocess.py has a single place in
-  // the code to point at when understanding the metric shape, and
-  // so future extensions (e.g. emitting V-phase records) have a hook.
   void verb; void startedAt; void r;
 }

@@ -5,9 +5,13 @@ Where the FHIR Server Compare harness is going. Dates are targets, not commitmen
 ## Current state — v0 (2026-Q2)
 
 - 6 OSS servers in the matrix: HAPI, Aidbox, Medplum, MS FHIR, Blaze, Spark.
-- Single-patient behavioral matrix (`compare.py`) with 11 hand-picked queries.
+- Single-patient behavioral matrix (`compare.py`) with hand-picked queries.
 - Conformance TestScripts for `fhir-r4-base`, `smart-on-fhir-v2`, and `bulk-data-v2` profiles, MUST/SHOULD/MAY buckets.
-- Load test with 1K/4K/16K/64K checkpoint ladder, CRUD + Search workloads, ops/sec + p50 (median, headline) / p95 / p99 (tail evidence) latency + fairness metrics per server.
+- Load test with 1K/4K/16K/64K checkpoint ladder. Three workloads:
+  - **CRUD** — symmetric C/R/U/D over five resource types (Patient / Observation / Condition / Encounter / MedicationRequest), per-(verb × type) breakdown in `per_verb[]`.
+  - **Search** — 30 queries spanning four search classes (Simple / Complex / Full-Text / Operation), per-class breakdown via `per_verb[].complexity`.
+  - **Ingest** — transaction Bundle POST throughput; bundles/sec headline.
+- p50 (median, headline) / p95 / p99 (tail evidence) latency + fairness metrics per server.
 - Round artifacts (`results/rounds/<id>/*.json`) in the canonical `round-v1` schema, validated before publish.
 - Copy-to-`fhir-studio` pipeline: atomic temp-dir rename, sha256 manifest, SVG badge generation.
 
@@ -18,6 +22,7 @@ Where the FHIR Server Compare harness is going. Dates are targets, not commitmen
 - **100K-patient stage.** Current ramp tops out at 50K. Extend to 100K for the first "scale" round.
 - **Additional workloads.** `$validate` against US Core profiles, `$everything` (patient summary), Bulk Data `$export`.
 - **Realistic clinical queries.** "All HbA1c for diabetics with CKD on metformin" — the query shape that actually appears in production. No one else is benchmarking it.
+- **More search classes.** Today the load mix is dominated by `SIMPLE` (18) with a long full-text tail (7) and only 2 `COMPLEX` queries. Round v1 expands `COMPLEX` (`_include` / `_revinclude` / chained reference) to break the per-class signal-to-noise floor.
 - **Per-server profile pages.** Auto-generated from `config/servers.yaml` + the latest round's artifact.
 - **Per-test explainer pages.** Each query and TestScript gets a permanent URL explaining what it's measuring and why.
 - **SVG badges.** `/conformance/badges/<server>/<profile>.svg` rendered live; vendors embed in their READMEs (the viral bit).

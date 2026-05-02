@@ -68,8 +68,21 @@ function resolveUrl(base, next) {
 // Port of harvest_patient_ids — uniform sampling over ALL patient ids.
 // Hot-set bias would let row-cache-heavy servers look artificially fast.
 export function harvestPatientIds(server, target) {
+  return harvestResourceIds(server, 'Patient', target);
+}
+
+// Generalized id harvester: paginates {resourceType}?_count=200&_elements=id
+// until the target cap is reached or pagination terminates. Used by both
+// harvestPatientIds and the CRUD per-type read pools (Observation,
+// Condition, Encounter, MedicationRequest). Returns an array of bare ids.
+//
+// `target == null` means "until the server stops paging" — appropriate for
+// Patient where we want every id in the corpus. For non-Patient types we
+// cap at a few thousand to avoid spending the workload's setup budget on
+// id harvesting alone (Synthea writes 10× more Observations than patients).
+export function harvestResourceIds(server, resourceType, target) {
   const ids = [];
-  let url = `${server.base_url}/Patient?_count=200&_elements=id`;
+  let url = `${server.base_url}/${resourceType}?_count=200&_elements=id`;
   const headers = serverHeaders(server);
   let page = 0;
   while (url) {
@@ -81,7 +94,7 @@ export function harvestPatientIds(server, target) {
       // Bundle, auth redirect) is visible in k6 output. Subsequent
       // pages stay quiet to avoid flooding the log.
       const bodyLen = (resp.body || '').length;
-      console.log(`[harvest] ${server.id} page 1: status=${resp.status} body=${bodyLen}B url=${url}`);
+      console.log(`[harvest] ${server.id} ${resourceType} page 1: status=${resp.status} body=${bodyLen}B`);
     }
     if (resp.status < 200 || resp.status >= 300) break;
     let body;
@@ -100,6 +113,44 @@ export function harvestPatientIds(server, target) {
     url = resolved;
   }
   return target != null ? ids.slice(0, target) : ids;
+}
+
+// Per-type read pool cap for non-Patient types in the CRUD workload.
+// 5000 samples is enough for 64 VUs to avoid material hot-set bias over
+// a 15-minute run while keeping setup time under a minute even on slow
+// servers. Patients keep their own (uncapped) target via HARVEST_TARGET.
+const CRUD_NONPATIENT_POOL_CAP = 5000;
+
+// Build the per-type read-id map for the CRUD workload. Each value is an
+// array of ids — the VU loop indexes randomly into the array per read.
+// Returned shape (keys are FHIR resourceType strings to match the
+// CREATE_TEMPLATES / TEMPLATES_BY_TYPE keys in update_templates.js):
+//   {
+//     Patient:           [...],   // capped at patientTarget (if not null)
+//     Observation:       [...],   // capped at CRUD_NONPATIENT_POOL_CAP
+//     Condition:         [...],
+//     Encounter:         [...],
+//     MedicationRequest: [...],
+//   }
+//
+// Empty arrays are valid — a server with zero Conditions ingested simply
+// gets fewer Condition reads exercised. The CRUD verb dispatcher in
+// crud.js falls back to the Patient pool when a non-Patient pool is
+// empty so the workload doesn't idle.
+export function harvestCrudReadPools(server, patientTarget) {
+  const t0 = Date.now();
+  const pools = {
+    Patient:           harvestResourceIds(server, 'Patient',           patientTarget),
+    Observation:       harvestResourceIds(server, 'Observation',       CRUD_NONPATIENT_POOL_CAP),
+    Condition:         harvestResourceIds(server, 'Condition',         CRUD_NONPATIENT_POOL_CAP),
+    Encounter:         harvestResourceIds(server, 'Encounter',         CRUD_NONPATIENT_POOL_CAP),
+    MedicationRequest: harvestResourceIds(server, 'MedicationRequest', CRUD_NONPATIENT_POOL_CAP),
+  };
+  const dt = ((Date.now() - t0) / 1000).toFixed(1);
+  const summary = Object.entries(pools)
+    .map(([k, v]) => `${k}=${v.length.toLocaleString()}`).join(', ');
+  console.log(`[crud_pools] harvested in ${dt}s: ${summary}`);
+  return pools;
 }
 
 // Extract first 'system|code' token from a CodeableConcept.
