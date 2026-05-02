@@ -67,6 +67,10 @@ SERVER_CONTAINERS: dict[str, list[str]] = {
     "medplum": [
         "fhir-compare-medplum-1", "fhir-compare-medplum-2",
         "fhir-compare-medplum-3", "fhir-compare-medplum-4",
+        "fhir-compare-medplum-5", "fhir-compare-medplum-6",
+        "fhir-compare-medplum-7", "fhir-compare-medplum-8",
+        "fhir-compare-medplum-9", "fhir-compare-medplum-10",
+        "fhir-compare-medplum-11", "fhir-compare-medplum-12",
         "fhir-compare-medplum-lb",
         "fhir-compare-medplum-db", "fhir-compare-medplum-redis",
     ],
@@ -78,7 +82,7 @@ SERVER_CONTAINERS: dict[str, list[str]] = {
 #   HAPI:     6,902 res/s  (Postgres JPA)
 #   Aidbox:   4,218 res/s  (Postgres, custom storage)
 #   MS FHIR:  1,167 res/s  (SQL Server + parallel bundle processing)
-#   Medplum:    690 res/s  (Postgres, 4x load-balanced replicas)
+#   Medplum:    690 res/s  (Postgres, 12x load-balanced replicas; was 4x — count to be re-measured after scale-up)
 #   Spark:     ~20  res/s  (MongoDB — ingest-bottlenecked; 1K takes hours)
 # Ordering so the fastest finishes first gives per-checkpoint data faster.
 DEFAULT_SERVER_ORDER = ("blaze", "hapi", "aidbox", "msfhir", "medplum", "spark")
@@ -134,7 +138,7 @@ def reset_server(server_id: str) -> None:
 
 def _services_for(server_id: str) -> list[str]:
     # keep in sync with Makefile's *_SVCS lists. Medplum's loadtest topology
-    # is 4 x medplum-server replicas + nginx LB sharing one postgres + redis
+    # is 12 x medplum-server replicas + nginx LB sharing one postgres + redis
     # (see docker-compose.loadtest.yml for rationale — plain Express, no
     # cluster mode, so we match their documented horizontal-scale pattern).
     return {
@@ -143,6 +147,8 @@ def _services_for(server_id: str) -> list[str]:
         "medplum": [
             "medplum-db", "medplum-redis",
             "medplum-1", "medplum-2", "medplum-3", "medplum-4",
+            "medplum-5", "medplum-6", "medplum-7", "medplum-8",
+            "medplum-9", "medplum-10", "medplum-11", "medplum-12",
             "medplum-lb",
         ],
         "msfhir":  ["msfhir", "msfhir-db"],
@@ -160,19 +166,23 @@ def up_server(server_id: str) -> None:
     services = _services_for(server_id)
     if server_id == "medplum":
         # Medplum seeds structure definitions on first boot of an empty DB.
-        # That seed runs OUTSIDE the migration advisory lock — so if 4 replicas
-        # launch at once against an empty volume, they race on concurrent
-        # inserts/deletes into StructureDefinition and one or more crash with
-        # "could not serialize access due to concurrent delete" before
-        # restarting cleanly. The crash-then-recover completes healthy within
-        # ~60s, but docker compose up -d already bailed on the dependency by
-        # then. Fix: bring up medplum-1 ALONE first, wait for it to finish
-        # seeding (healthcheck passes), then bring up the other three replicas
-        # plus the LB — they'll see "Already seeded" and start cleanly.
+        # That seed runs OUTSIDE the migration advisory lock — so if many
+        # replicas launch at once against an empty volume, they race on
+        # concurrent inserts/deletes into StructureDefinition and one or more
+        # crash with "could not serialize access due to concurrent delete"
+        # before restarting cleanly. The crash-then-recover completes healthy
+        # within ~60s, but docker compose up -d already bailed on the
+        # dependency by then. Fix: bring up medplum-1 ALONE first, wait for
+        # it to finish seeding (healthcheck passes), then bring up the other
+        # eleven replicas plus the LB — they'll see "Already seeded" and
+        # start cleanly.
         _run(["docker", "compose", *COMPOSE_FILES, "up", "-d", "--wait",
               "medplum-db", "medplum-redis", "medplum-1"])
         _run(["docker", "compose", *COMPOSE_FILES, "up", "-d",
-              "medplum-2", "medplum-3", "medplum-4", "medplum-lb"])
+              "medplum-2", "medplum-3", "medplum-4",
+              "medplum-5", "medplum-6", "medplum-7", "medplum-8",
+              "medplum-9", "medplum-10", "medplum-11", "medplum-12",
+              "medplum-lb"])
         return
     _run(["docker", "compose", *COMPOSE_FILES, "up", "-d", *services])
 

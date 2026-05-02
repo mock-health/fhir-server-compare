@@ -105,7 +105,7 @@ fhir-server-compare/
 │   └── medplum.config.json + medplum-lb.conf
 │
 ├── profiles/                         workload profiles (YAML)
-│   ├── benchmark/                    crud.yaml, search.yaml — performance workload shapes
+│   ├── benchmark/                    crud.yaml, search.yaml, ingest.yaml — performance workload shapes
 │   └── conformance/                  per-profile MUST/SHOULD/MAY rules
 │
 ├── conformance/testscripts/          FHIR TestScripts (one JSON per test)
@@ -140,6 +140,8 @@ A round id like `2026-q2-r000` decomposes as: `<year>-q<quarter>-r<NNN>` (zero-p
 ## The k6 workload harness
 
 The timed CRUD + Search phase runs in [Grafana k6](https://k6.io/) inside a docker container. `fhirbench.harness.ramp` owns the per-server lifecycle (reset → boot → wait healthy → bootstrap → ingest → workloads → cell_complete → stop) and invokes k6 per workload via `fhirbench.harness.k6_driver`. The k6 scripts live under `src/fhirbench/k6/`; a Python context emitter (`fhirbench.cli.emit_k6_context`) resolves `config/servers.yaml` + `config/queries.yaml` + env vars in one place so k6 never sees YAML, and a post-processor (`fhirbench.k6.postprocess`) reshapes the raw NDJSON into the `crud.jsonl` / `search.jsonl` shape the cell-summary + parse-report pipeline reads.
+
+Every k6 sample is tagged with two extra dimensions (added 2026-04-30): `resource_type` (the FHIR type the request operated on, populated for both CRUD and Search) and `complexity` (Search only — `SIMPLE` / `COMPLEX` / `FULL_TEXT` / `OPERATION`, copied from `config/queries.yaml`). `fhirbench.benchmark.cell_summary` groups raw records by the composite `(verb, resource_type, complexity)` key so every per-verb item in the round artifact can split along these dimensions. Both fields are optional in `schema/round-v1.schema.json` — pre-2026-04-30 round artifacts emit only `verb`, and consumers should treat the absence as "any" along that dimension.
 
 ## Adding things
 

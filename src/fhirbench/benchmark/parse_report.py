@@ -52,6 +52,11 @@ ROSTER = ("hapi", "aidbox", "medplum", "msfhir", "blaze", "spark")
 GREEN_MAX_MS = 100.0
 AMBER_MAX_MS = 1000.0
 
+# Throughput thresholds (bundles/sec) for ingest. Provisional bands; revisit
+# after first published numbers settle. Same coarse-by-design logic as latency.
+GREEN_MIN_OPS = 5.0
+AMBER_MIN_OPS = 1.0
+
 
 def cell_color(p50_ms: float | None) -> str:
     if p50_ms is None:
@@ -61,6 +66,23 @@ def cell_color(p50_ms: float | None) -> str:
     if p50_ms <= AMBER_MAX_MS:
         return "amber"
     return "red"
+
+
+def cell_color_throughput(ops_per_s: float | None) -> str:
+    if ops_per_s is None:
+        return "grey"
+    if ops_per_s >= GREEN_MIN_OPS:
+        return "green"
+    if ops_per_s >= AMBER_MIN_OPS:
+        return "amber"
+    return "red"
+
+
+def color_for(profile: dict, headline_row: dict) -> str:
+    """Pick the right color band based on the profile's headline metric."""
+    if profile.get("headline_metric") == "ops_per_s":
+        return cell_color_throughput(headline_row.get("ops_ok_per_s"))
+    return cell_color(headline_row.get("p50_ms"))
 
 
 def load_server_meta() -> list[dict]:
@@ -112,7 +134,8 @@ def discover_checkpoints(run_dir: pathlib.Path) -> list[int]:
 def _evidence_for_workload(cell_dir: pathlib.Path, checkpoint: int,
                            ran_at: str, jsonl_name: str,
                            use_ok_only: bool,
-                           server_id: str) -> dict | None:
+                           server_id: str,
+                           workload_id: str = "") -> dict | None:
     """Build one evidence row from crud.jsonl or search.jsonl.
 
     Delegates percentile/trust math to `cell_summary._workload_summary` so
@@ -121,7 +144,7 @@ def _evidence_for_workload(cell_dir: pathlib.Path, checkpoint: int,
     desaturated (see schema definitions/trust).
     """
     records = parse_jsonl(cell_dir / jsonl_name)
-    summary = _workload_summary(records, use_ok_only)
+    summary = _workload_summary(records, use_ok_only, workload_id=workload_id)
     if summary is None:
         return None
     row: dict = {
@@ -171,23 +194,29 @@ def _cell_complete_ts(cell_dir: pathlib.Path) -> str | None:
 
 def build_cells(run_dir: pathlib.Path,
                 server_ids: list[str],
-                profile_ids: list[str]) -> list[dict]:
+                profiles: list[dict]) -> list[dict]:
     """For each (server, profile) produce a cell whose evidence[] is the
     per-checkpoint series. Cells with zero evidence rows (no checkpoint
     completed for this profile) become grey."""
     checkpoints = discover_checkpoints(run_dir)
 
-    # Benchmark profiles are the core scaling workloads. Ingest is excluded by
-    # design — it's setup tax, not a published metric: vendors reasonably argue
-    # Synthea bundles should go through their bulk $import path, not transaction
-    # POSTs, so per-bundle POST p99 is not a fair scaling signal.
-    # USE_OK_ONLY is shared with cell_summary so the round artifact and the
-    # per-cell summaries apply the same ok-only-vs-all-requests convention.
-    WORKLOAD_JSONL = {"crud": "crud.jsonl", "search": "search.jsonl"}
+    # Each profile id maps to the per-cell jsonl that postprocess emits.
+    # Ingest measures transaction-Bundle POST throughput (one record per
+    # bundle), with bundles/sec as the headline metric — see
+    # profiles/benchmark/ingest.yaml and benchmark/methodology.md for the
+    # HL7v2→FHIR pipeline framing. USE_OK_ONLY is shared with cell_summary
+    # so the round artifact and the per-cell summaries apply the same
+    # ok-only-vs-all-requests convention.
+    WORKLOAD_JSONL = {
+        "crud":   "crud.jsonl",
+        "search": "search.jsonl",
+        "ingest": "ingest.jsonl",
+    }
 
     cells: list[dict] = []
     for sid in server_ids:
-        for pid in profile_ids:
+        for profile in profiles:
+            pid = profile["id"]
             if pid not in WORKLOAD_JSONL:
                 continue
             evidence: list[dict] = []
@@ -204,7 +233,7 @@ def build_cells(run_dir: pathlib.Path,
                 row = _evidence_for_workload(
                     cell_dir, ckpt, ran_at,
                     WORKLOAD_JSONL[pid], USE_OK_ONLY[pid],
-                    sid,
+                    sid, workload_id=pid,
                 )
                 if row is None:
                     continue
@@ -223,14 +252,16 @@ def build_cells(run_dir: pathlib.Path,
                 })
                 continue
 
-            # Headline status from p50 (median) at the largest checkpoint reached.
-            # trust is mirrored up from the headline evidence row so the heatmap
-            # can decide whether to desaturate without descending into evidence[].
+            # Headline status from the profile's headline metric (p50 latency
+            # for CRUD/Search, ops_ok_per_s for Ingest) at the largest
+            # checkpoint reached. trust is mirrored up from the headline
+            # evidence row so the heatmap can decide whether to desaturate
+            # without descending into evidence[].
             headline = evidence[-1]  # evidence is ordered by ascending checkpoint
             cells.append({
                 "server_id": sid,
                 "profile_id": pid,
-                "status": cell_color(headline["p50_ms"]),
+                "status": color_for(profile, headline),
                 "percentage": None,
                 "passed": {"MUST": 0, "SHOULD": 0, "MAY": 0},
                 "total":  {"MUST": 0, "SHOULD": 0, "MAY": 0},
@@ -304,9 +335,8 @@ def build_round(round_id: str,
         raise SystemExit(f"no profiles configured under {PROFILES_DIR}")
 
     server_ids = [s["id"] for s in servers]
-    profile_ids = [p["id"] for p in profiles]
 
-    cells = build_cells(run_dir, server_ids, profile_ids)
+    cells = build_cells(run_dir, server_ids, profiles)
     hardware = load_hardware_meta(run_dir)
 
     artifact: dict[str, Any] = {

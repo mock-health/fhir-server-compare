@@ -23,13 +23,33 @@
 #
 # Medplum horizontal scaling: Medplum's server is architecturally single-core
 # per process (plain express, no cluster). Their documented deployment topology
-# is N replicas behind a load balancer. To give Medplum the same 12-CPU budget
-# HAPI/Aidbox/MS FHIR get in a single container, we run 4 x medplum-server
-# replicas (2.5 CPU each) + nginx LB (2 CPU) — 12 CPU total — all sharing one
-# postgres + redis. Postgres isolation, statement_timeout, and preload libs
-# match the settings in medplum/medplum's docker-compose.full-stack.yml so we
-# run against Medplum's own recommended baseline (the loadtest perf tuning
-# layers on top without conflict).
+# is N replicas behind a load balancer. We run 12 medplum-server replicas
+# (1 CPU each) behind nginx so 12 single-threaded Node processes can together
+# saturate the same 12-CPU server pool that HAPI/Aidbox/MS FHIR each receive
+# as one multithreaded container — same compute budget, no cores stranded by
+# Express's per-process single-threading.
+#
+# Budget invariant (replicas + LB ≤ 12 CPU server-side):
+#   12 replicas × cpus: 1.0          = 12.0 CPU (hard quota)
+#    1 nginx LB    (no cpus quota)   ≈  0-0.5 CPU in practice; shares the
+#                                       cpuset 0-11,16-27 with replicas, which
+#                                       have spare headroom (Node can't burst
+#                                       above one core per process).
+#   ────────────────────────────────────────────
+#   Server-side total                = 12 CPU (matches HAPI/Aidbox/MS FHIR)
+#   medplum-db                       =  6 CPU (matches every other DB)
+#   medplum-redis                    =  1 CPU (Medplum-required sidecar)
+#
+# This sizing was adopted on 2026-04-28 in response to a fairness suggestion
+# from Marat Surmashev (Aidbox) — that the previous 4 × 2.5 CPU topology
+# under-utilized the budget because only 4 of the 10 server-pool CPUs could
+# actually be consumed by single-threaded Express. With 12 replicas, every
+# CPU in the budget is reachable.
+#
+# Postgres isolation, statement_timeout, and preload libs match the settings
+# in medplum/medplum's docker-compose.full-stack.yml so we run against
+# Medplum's own recommended baseline (the loadtest perf tuning layers on top
+# without conflict).
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.loadtest.yml up -d
@@ -54,12 +74,12 @@ x-medplum-server: &medplum_server
       condition: service_healthy
   volumes:
     - ./config/medplum.config.json:/usr/src/medplum/medplum.config.json:ro
-  cpus: 2.5
-  mem_limit: 28g
+  cpus: 1.0
+  mem_limit: 4g
   cpuset: "0-11,16-27"
   restart: unless-stopped
   # First-to-start replica grabs the postgres advisory lock and runs
-  # migrations; the other three wait. start_period gives that replica 60s
+  # migrations; the other 11 wait. start_period gives that replica 60s
   # to finish before healthcheck failures start counting against retries.
   healthcheck:
     test:
@@ -88,6 +108,50 @@ services:
       spring.datasource.driverClassName: org.postgresql.Driver
       spring.jpa.properties.hibernate.dialect: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgres94Dialect
       hapi.fhir.fhir_version: R4
+      # --- embedded Lucene full-text indexing (HAPI 8.x) -----------------
+      # Turns on _content (resource-body full-text), _text (narrative
+      # full-text), and the :text modifier on token params (e.g.
+      # Condition?code:text=hyp...). Uses the embedded Lucene backend
+      # so no Elasticsearch sidecar is required. Indexes populate as
+      # Synthea bundles ingest — every loadtest cell starts cold, so no
+      # one-shot $reindex job is needed. Adopted 2026-04-30 because the
+      # marat-1k-shadow-v2 run showed 100% err on _content queries
+      # against vanilla HAPI; the methodology promised "Lucene-backed
+      # _content + :text", and this delivers it.
+      #
+      # HAPI 8.x needs three layers of config for full Lucene indexing —
+      # verified against the bundled WEB-INF/classes/application.yaml in
+      # the pinned image, which leaves the Hibernate Search backend
+      # section ENTIRELY COMMENTED OUT in the default config:
+      #   1. hapi.fhir.advanced_lucene_indexing=true       (HAPI feature flag)
+      #   2. hapi.fhir.search_index_full_text_enabled=true (enable _content/_text)
+      #   3. spring.jpa.properties.hibernate.search.*      (wire up Lucene backend)
+      # Without layer 3, HAPI returns HAPI-1192 "Fulltext search is not
+      # enabled" even with layers 1+2 on. Lucene index files live in
+      # /tmp/lucenefiles inside the container — ephemeral by design,
+      # rebuilt on each cold-start cell of the loadtest ramp.
+      #
+      # The :text modifier path (e.g. Patient?name:text=ohn,
+      # Condition?code:text=hyp) runs through the regular token+string
+      # indexes, not HSearch, so it works without any of these flags —
+      # already green in the v3 shadow run before this layer 3 fix.
+      #
+      # Cost: ~5-10% slower ingest (Lucene index writes per resource)
+      # and a few hundred MB of additional disk for the index files.
+      # Documented in docs/benchmark-methodology.md as part of the HAPI
+      # baseline so cross-server comparisons disclose the configuration.
+      hapi.fhir.advanced_lucene_indexing: "true"
+      hapi.fhir.search_index_full_text_enabled: "true"
+      hapi.fhir.lastn_enabled: "true"
+      spring.jpa.properties.hibernate.search.enabled: "true"
+      spring.jpa.properties.hibernate.search.backend.type: "lucene"
+      # $$ escapes Compose's variable interpolation; the runtime sees a
+      # single $ in the inner-class separator (ClassName$NestedClass).
+      spring.jpa.properties.hibernate.search.backend.analysis.configurer: "ca.uhn.fhir.jpa.search.HapiHSearchAnalysisConfigurers$$HapiLuceneAnalysisConfigurer"
+      spring.jpa.properties.hibernate.search.backend.directory.type: "local-filesystem"
+      spring.jpa.properties.hibernate.search.backend.directory.root: "/tmp/lucenefiles"
+      spring.jpa.properties.hibernate.search.backend.lucene_version: "lucene_current"
+      spring.jpa.properties.hibernate.search.schema_management.strategy: "CREATE"
     cpus: 12.0
     mem_limit: 128g
     cpuset: "0-11,16-27"
@@ -189,9 +253,11 @@ services:
     cpuset: "0-11,16-27"
 
   # --- Medplum -----------------------------------------------------------
-  # Four server replicas behind nginx (see x-medplum-server anchor above).
-  # Combined: 4 × 2.5 CPU (replicas) + 2 CPU (nginx) = 12 CPU, matching the
-  # single-container allocation that HAPI/Aidbox/MS FHIR get.
+  # Twelve server replicas behind nginx (see x-medplum-server anchor above).
+  # Combined: 12 × 1 CPU (replicas) + 0 CPU quota on nginx LB (shares cpuset,
+  # uses <0.5 CPU in practice) = 12 CPU server-pool, matching the single-
+  # container allocation that HAPI/Aidbox/MS FHIR get. See file-top comment
+  # for the budget rationale.
   medplum-1:
     <<: *medplum_server
     container_name: fhir-compare-medplum-1
@@ -204,6 +270,30 @@ services:
   medplum-4:
     <<: *medplum_server
     container_name: fhir-compare-medplum-4
+  medplum-5:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-5
+  medplum-6:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-6
+  medplum-7:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-7
+  medplum-8:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-8
+  medplum-9:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-9
+  medplum-10:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-10
+  medplum-11:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-11
+  medplum-12:
+    <<: *medplum_server
+    container_name: fhir-compare-medplum-12
 
   medplum-lb:
     image: nginx:1.27-alpine
@@ -217,11 +307,30 @@ services:
         condition: service_healthy
       medplum-4:
         condition: service_healthy
+      medplum-5:
+        condition: service_healthy
+      medplum-6:
+        condition: service_healthy
+      medplum-7:
+        condition: service_healthy
+      medplum-8:
+        condition: service_healthy
+      medplum-9:
+        condition: service_healthy
+      medplum-10:
+        condition: service_healthy
+      medplum-11:
+        condition: service_healthy
+      medplum-12:
+        condition: service_healthy
     ports:
       - "8103:8103"
     volumes:
       - ./config/medplum-lb.conf:/etc/nginx/nginx.conf:ro
-    cpus: 2.0
+    # No cpus: quota — nginx scavenges spare cycles inside the cpuset pool
+    # so the 12-CPU server-side budget is fully consumed by the 12 replicas.
+    # nginx forwarding uses <0.5 CPU in practice; if dryrun shows it pegged,
+    # revisit by giving it a dedicated CPU and dropping replicas to 11.
     mem_limit: 1g
     cpuset: "0-11,16-27"
     restart: unless-stopped

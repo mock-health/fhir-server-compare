@@ -49,10 +49,20 @@ make conformance-publish
 
 Round IDs follow `<year>-q<quarter>-r<NNN>` (zero-padded). Bump the round id when publishing so the old round stays citable.
 
+## Adding a new search query
+
+1. Append a block under `queries:` in `config/queries.yaml` with `name`, `path`, `expected_<server>` for every server in the roster, **and the two dimension tags**:
+   - `resource_type:` — the FHIR resource type the query targets (`Patient`, `Observation`, `Condition`, `Encounter`, `MedicationRequest`, `Metadata`, `ValueSet`, `CodeSystem`, `Procedure`, …). Flows into `per_verb[].resource_type` in the round artifact.
+   - `complexity:` — one of `SIMPLE` (single-parameter token / string / date / reference), `COMPLEX` (multi-parameter, compound AND, `_include` / `_revinclude`), `FULL_TEXT` (`_content` or a `:text` modifier), or `OPERATION` (`/metadata`, `_history`, `$expand`, `$lookup`, `$export`). Drives the search-class heatmap on `/performance/workloads/search`.
+2. If the query should be excluded from the load mix (asymmetric support, intentional 4xx, async polling, etc.), add `loadtest: skip:<reason>`. The single-patient `compare.py` matrix still runs it.
+3. If the query needs runtime-sampled parameter values (per-server live corpus harvest), add `matrix: skip:runtime_sampled` and define the placeholder shape — see existing `patient_by_family_exact`, `condition_by_code` for the pattern.
+4. Run `python -m fhirbench.compare` to fill in `expected_<server>` for the new row.
+5. The k6 driver picks up new queries automatically via `fhirbench.cli.emit_k6_context`; no JS change needed.
+
 ## Code style
 
 - Python: no linter enforced, but keep things boring and readable.
-- Configs (YAML, JSON): the round artifact must validate against `schema/round-v1.schema.json`. Don't break that schema — add optional fields if you need to extend.
+- Configs (YAML, JSON): the round artifact must validate against `schema/round-v1.schema.json`. Don't break that schema — add optional fields if you need to extend. The 2026-04-30 addition of optional `resource_type` and `complexity` to `per_verb[]` is the canonical example: both fields are `not required`, so old artifacts pre-2026-04-30 still validate while new artifacts carry the extra dimensions.
 
 ## Filing an issue
 
