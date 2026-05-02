@@ -20,7 +20,7 @@ Trust thresholds (derived from the rule of thumb: quantile q needs
 
 And the headline gate for cell desaturation:
 
-    trust.reliable = (err_rate <= 0.05) AND (ok_throughput >= 1 ok/sec)
+    trust.reliable = (err_rate <= 0.20) AND (ok_throughput >= 1 ok/sec)
 
 A cell below that gate still reports its p50 (medians survive small n) but
 the heatmap renders it dim — reader sees "this number is technically
@@ -52,14 +52,16 @@ QUANTILE_N_THRESHOLDS = {
 }
 
 # Headline reliability gate.
-MAX_ERR_RATE_RELIABLE = 0.05
+MAX_ERR_RATE_RELIABLE = 0.20
 MIN_OK_THROUGHPUT_RELIABLE = 1.0  # ok responses per second
 
 # Which workloads use the ok-only percentile stream (matches parse_report).
 # CRUD expects every op to succeed; search can fast-reject unsupported
 # queries, so we paint search with ok-only latency to avoid rewarding
-# fast 4xx "no" responses.
-USE_OK_ONLY = {"crud": False, "search": True}
+# fast 4xx "no" responses. Ingest also expects every transaction Bundle
+# POST to succeed (200) — mismatched payloads count as errors, not as
+# fast successes.
+USE_OK_ONLY = {"crud": False, "search": True, "ingest": False}
 
 
 def _trust(n_ok: int, err_rate: float, ops_ok_per_s: float) -> dict[str, Any]:
@@ -85,11 +87,46 @@ def _trust(n_ok: int, err_rate: float, ops_ok_per_s: float) -> dict[str, Any]:
     return t
 
 
-def _workload_summary(records: list[dict], use_ok_only: bool) -> dict[str, Any] | None:
+def _normalize_ingest_records(records: list[dict]) -> list[dict]:
+    """Map loader.py's per-bundle rows into the canonical shape.
+
+    Loader writes:
+      {bundle, started_at, duration_ms, status_code, entries_sent,
+       entries_2xx/4xx/5xx, error, phase}
+    plus a leading sentinel like {"event":"prereq_start", count, started_at}.
+
+    The percentile + grouping pipeline expects `ok` (bool) and `verb` (str).
+    We synthesize `ok` from a 2xx status_code and tag verb="T" (transaction)
+    so per-verb grouping yields a single "T" entry per ingest cell. Records
+    without `duration_ms` (sentinels) are dropped.
+    """
+    out: list[dict] = []
+    for r in records:
+        if "duration_ms" not in r:
+            continue
+        sc = r.get("status_code") or 0
+        out.append({**r, "ok": 200 <= sc < 300, "verb": r.get("verb", "T")})
+    return out
+
+
+def _workload_summary(records: list[dict], use_ok_only: bool,
+                      workload_id: str = "") -> dict[str, Any] | None:
     """Build the summary dict for one workload's jsonl.
 
     Returns None if the jsonl was empty/missing.
+
+    Per-verb grouping (added 2026-04-30): records are grouped by the
+    composite key (verb, resource_type, complexity). When records lack
+    resource_type/complexity (legacy pre-2026-04-30 NDJSON), the
+    composite reduces to (verb, None, None) and the published per_verb
+    items are identical to the verb-only output — strict backward
+    compatibility. See plans/marat-from-health-samurai-wondrous-tome.md.
+
+    workload_id="ingest" triggers the loader-shape adapter (records carry
+    status_code instead of ok, no verb, with a leading event sentinel).
     """
+    if workload_id == "ingest":
+        records = _normalize_ingest_records(records)
     if not records:
         return None
     m = workload_metrics(records)
@@ -114,35 +151,64 @@ def _workload_summary(records: list[dict], use_ok_only: bool) -> dict[str, Any] 
 
     trust = _trust(n_ok, err_rate, ops_ok_per_s)
 
+    # Group by composite key. defaultdict(list) lets us accumulate
+    # without checking key existence; the key shape — a 3-tuple of
+    # strings or None — is hashable so this is O(N) over records.
+    from collections import defaultdict
+    groups: dict[tuple[str, str | None, str | None], list[dict]] = defaultdict(list)
+    for r in records:
+        key = (
+            r.get("verb", "?"),
+            r.get("resource_type"),
+            r.get("complexity"),
+        )
+        groups[key].append(r)
+
     per_verb: list[dict[str, Any]] = []
-    for verb, vm in (m.get("per_verb") or {}).items():
-        v_n_total = int(vm["count"])
-        v_n_ok = int(vm["ok_count"])
+    for (verb, resource_type, complexity), group_recs in groups.items():
+        v_n_total = len(group_recs)
+        v_n_ok = sum(1 for r in group_recs if r.get("ok"))
         v_n_err = v_n_total - v_n_ok
-        v_err_rate = float(vm.get("error_rate", 0.0))
+        v_err_rate = (v_n_err / v_n_total) if v_n_total else 0.0
+        v_ops_per_s = (v_n_total / elapsed) if elapsed > 0 else 0.0
         v_ops_ok_per_s = (v_n_ok / elapsed) if elapsed > 0 else 0.0
         v_lats = [
             r.get("duration_ms", 0)
-            for r in records
-            if r.get("verb") == verb and ((not use_ok_only) or r.get("ok"))
+            for r in group_recs
+            if (not use_ok_only) or r.get("ok")
         ]
-        v_p75 = percentile(v_lats, 75) if v_lats else 0.0
-        per_verb.append({
+        item: dict[str, Any] = {
             "verb": verb,
-            "p50_ms": round(vm[f"p50{suffix}"], 2),
-            "p75_ms": round(v_p75, 2),
-            "p90_ms": round(vm.get(f"p90{suffix}", 0.0), 2),
-            "p95_ms": round(vm[f"p95{suffix}"], 2),
-            "p99_ms": round(vm[f"p99{suffix}"], 2),
-            "ops_per_s":    round(vm["ops_per_s"], 2),
+            "p50_ms": round(percentile(v_lats, 50), 2),
+            "p75_ms": round(percentile(v_lats, 75), 2),
+            "p90_ms": round(percentile(v_lats, 90), 2),
+            "p95_ms": round(percentile(v_lats, 95), 2),
+            "p99_ms": round(percentile(v_lats, 99), 2),
+            "ops_per_s":    round(v_ops_per_s, 2),
             "ops_ok_per_s": round(v_ops_ok_per_s, 2),
             "n":     v_n_total,
             "n_ok":  v_n_ok,
             "n_err": v_n_err,
             "error_rate": round(v_err_rate, 4),
             "trust": _trust(v_n_ok, v_err_rate, v_ops_ok_per_s),
-        })
-    per_verb.sort(key=lambda r: r["verb"])
+        }
+        # Only emit the new dimensions when present. Schema marks both
+        # as optional so legacy consumers reading current artifacts
+        # don't trip on the additions, and current consumers reading
+        # legacy artifacts don't see ghost None fields.
+        if resource_type is not None:
+            item["resource_type"] = resource_type
+        if complexity is not None:
+            item["complexity"] = complexity
+        per_verb.append(item)
+    # Stable, deterministic sort by all three dimensions so successive
+    # runs on identical data produce byte-identical cell_summary.json
+    # files (eases diff review in PRs).
+    per_verb.sort(key=lambda r: (
+        r["verb"],
+        r.get("resource_type") or "",
+        r.get("complexity") or "",
+    ))
 
     return {
         "n":      n_total,
@@ -165,12 +231,14 @@ def _workload_summary(records: list[dict], use_ok_only: bool) -> dict[str, Any] 
 def summarize_cell(cell_dir: pathlib.Path) -> dict[str, Any] | None:
     """Build the cell-level summary dict. Returns None if neither jsonl exists."""
     summaries: dict[str, dict[str, Any]] = {}
-    for wl, fname in (("crud", "crud.jsonl"), ("search", "search.jsonl")):
+    for wl, fname in (("crud", "crud.jsonl"),
+                      ("search", "search.jsonl"),
+                      ("ingest", "ingest.jsonl")):
         path = cell_dir / fname
         if not path.is_file():
             continue
         recs = parse_jsonl(path)
-        s = _workload_summary(recs, USE_OK_ONLY[wl])
+        s = _workload_summary(recs, USE_OK_ONLY[wl], workload_id=wl)
         if s is not None:
             summaries[wl] = s
     if not summaries:

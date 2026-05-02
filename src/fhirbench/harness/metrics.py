@@ -23,6 +23,15 @@ class OpRecord:
     status_code: int     # 0 on network error
     ok: bool             # 2xx
     note: str | None = None
+    # The next two fields were added 2026-04-30 to support the
+    # per-resource-type CRUD breakdown (Marat Surmashev feedback) and
+    # the search-complexity classification (HealthSamurai roadmap
+    # parity). Both default to None so legacy NDJSON (pre-2026-04-30)
+    # continues to deserialize cleanly — cell_summary's per_verb grouper
+    # treats None as the absence of that dimension. See
+    # plans/marat-from-health-samurai-wondrous-tome.md.
+    resource_type: str | None = None  # CRUD: target FHIR type; Search: query target type
+    complexity: str | None = None     # Search only: SIMPLE | COMPLEX | FULL_TEXT | OPERATION
 
 
 class OpLog:

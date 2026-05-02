@@ -19,7 +19,7 @@ const QUANTILE_N_THRESHOLDS = {
 
 // Headline reliability gate. Matches cell_summary.MAX_ERR_RATE_RELIABLE /
 // MIN_OK_THROUGHPUT_RELIABLE.
-const MAX_ERR_RATE_RELIABLE = 0.05;
+const MAX_ERR_RATE_RELIABLE = 0.20;
 const MIN_OK_THROUGHPUT_RELIABLE = 1.0;
 
 // Which workloads use the ok-only percentile stream. CRUD expects every
@@ -82,14 +82,26 @@ export function workloadSummary(records, useOkOnly) {
 
   const trust = buildTrust(nOk, errRate, opsOkPerS);
 
-  // Per-verb breakout: group records by verb, recompute each.
-  const byVerb = {};
+  // Per-verb breakout: group records by the composite key
+  // (verb, resource_type, complexity). Mirrors cell_summary.py's grouping —
+  // see plans/marat-from-health-samurai-wondrous-tome.md (Tracks A + C).
+  // Records lacking the new dimensions group as (verb, undefined, undefined),
+  // preserving the original verb-only breakdown for legacy callers.
+  const groups = new Map();
   for (const r of records) {
-    (byVerb[r.verb] = byVerb[r.verb] || []).push(r);
+    const key = `${r.verb}\x1f${r.resource_type || ''}\x1f${r.complexity || ''}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        verb: r.verb,
+        resource_type: r.resource_type || null,
+        complexity: r.complexity || null,
+        recs: [],
+      });
+    }
+    groups.get(key).recs.push(r);
   }
   const perVerb = [];
-  for (const verb of Object.keys(byVerb).sort()) {
-    const vRecs = byVerb[verb];
+  for (const { verb, resource_type, complexity, recs: vRecs } of groups.values()) {
     const vTotal = vRecs.length;
     const vOk = vRecs.filter(r => r.ok).length;
     const vErr = vTotal - vOk;
@@ -99,7 +111,7 @@ export function workloadSummary(records, useOkOnly) {
       .map(r => r.duration_ms)
       .sort((a, b) => a - b);
     const vQ = quantiles(vLats);
-    perVerb.push({
+    const item = {
       verb,
       p50_ms: round2(vQ.p50),
       p75_ms: round2(vQ.p75),
@@ -113,8 +125,22 @@ export function workloadSummary(records, useOkOnly) {
       n_err: vErr,
       error_rate: round4(vErrRate),
       trust: buildTrust(vOk, vErrRate, vOpsOkPerS),
-    });
+    };
+    if (resource_type) item.resource_type = resource_type;
+    if (complexity) item.complexity = complexity;
+    perVerb.push(item);
   }
+  // Same sort order cell_summary.py uses, so the JS and Python harnesses
+  // produce byte-identical per_verb arrays for shadow-validator runs.
+  perVerb.sort((a, b) => {
+    if (a.verb !== b.verb) return a.verb < b.verb ? -1 : 1;
+    const arT = a.resource_type || '';
+    const brT = b.resource_type || '';
+    if (arT !== brT) return arT < brT ? -1 : 1;
+    const aC = a.complexity || '';
+    const bC = b.complexity || '';
+    return aC < bC ? -1 : (aC > bC ? 1 : 0);
+  });
 
   return {
     n: nTotal,

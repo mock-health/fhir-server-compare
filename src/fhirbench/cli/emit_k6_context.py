@@ -115,6 +115,8 @@ def _load_queries(queries_path: Path, workload: str) -> list[dict]:
                 continue
         out.append({
             "name": q.get("name"),
+            "resource_type": q.get("resource_type"),
+            "complexity": q.get("complexity"),
             "method": (q.get("method") or "GET").upper(),
             "path": q.get("path") or "",
             "params": q.get("params") or {},

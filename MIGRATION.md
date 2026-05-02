@@ -119,9 +119,18 @@ The April 2026 reorganization also removed HFS (Helios FHIR Server) from the ros
 
 If your fork added HFS-related code, you can find the pre-removal state in the git history before commit `af5f974`.
 
-## Round artifact format — UNCHANGED
+## Round artifact format — UNCHANGED for v1, two optional fields added 2026-04-30
 
-`results/rounds/<id>/{benchmark,conformance}.json` schema is identical (still `schema/round-v1.schema.json`, version 1). `MANIFEST.json` sha256 hashes were not regenerated. Existing rounds remain valid.
+`results/rounds/<id>/{benchmark,conformance}.json` schema is still `schema/round-v1.schema.json`, version 1. `MANIFEST.json` sha256 hashes were not regenerated. Existing rounds remain valid.
+
+The 2026-04-30 round added two **optional** fields to each `per_verb[]` item:
+
+- `resource_type` (string) — FHIR type the verb operated on. CRUD splits its four C/R/U/D rows into one row per (verb, resource_type) pair; Search rows carry the per-query target type.
+- `complexity` (enum: `SIMPLE` / `COMPLEX` / `FULL_TEXT` / `OPERATION`) — Search-only class label.
+
+Both are optional. Pre-2026-04-30 round artifacts emit only `verb` and validate against the same schema; consumers should treat absence as "any" along that dimension. The same `verb` value can now legitimately appear in multiple `per_verb[]` items differentiated by these new dimensions, so callers that key per-verb data by `verb` alone need to switch to the composite `(verb, resource_type, complexity)` key (the published rows are already sorted by that tuple). See [`docs/benchmark-methodology.md#per-verb-dimensions`](docs/benchmark-methodology.md#per-verb-dimensions) for the data model.
+
+A third optional field — `headline_metric` on the profile object (`null` / `"p50_ms"` / `"ops_per_s"`) — was added in the same release to let the `Ingest` profile flag itself as throughput-headlined while CRUD and Search default to latency. Old artifacts that omit the field validate the same way; consumers default to `p50_ms`.
 
 ## Public Make targets — UNCHANGED names
 

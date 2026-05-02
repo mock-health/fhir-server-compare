@@ -113,6 +113,17 @@ def convert(k6_json_path: Path, workload: str, out_path: Path) -> int:
             note = tags.get("note") or tags.get("template")
             if note:
                 rec["note"] = note
+            # resource_type + complexity tags were added 2026-04-30 (see
+            # plans/marat-from-health-samurai-wondrous-tome.md). Old NDJSON
+            # won't have them — emit only when present so the JSONL stays
+            # tight and downstream readers can detect "legacy run" by
+            # field absence.
+            resource_type = tags.get("resource_type")
+            if resource_type:
+                rec["resource_type"] = resource_type
+            complexity = tags.get("complexity")
+            if complexity:
+                rec["complexity"] = complexity
             fout.write(json.dumps(rec, separators=(",", ":")) + "\n")
             n += 1
     return n
