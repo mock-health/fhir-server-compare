@@ -11,6 +11,10 @@
 # lockfiles, permission allowlists. Not relevant to users of the repo.
 .claude/
 
+# Internal maintainer backlog — local working notes, never published.
+# Purged from history 2026-05-03; keep ignored so it stays local-only.
+TODOS.md
+
 # Firely Server license file (cryptographically signed, vendor-issued).
 # DO NOT commit. Each developer obtains their own from https://fire.ly.
 firely-license.json
