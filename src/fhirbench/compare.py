@@ -228,9 +228,22 @@ def render_table(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--queries", default=str(DEFAULT_QUERIES))
-    parser.add_argument("--servers", default=str(DEFAULT_SERVERS))
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--queries",
+        default=str(DEFAULT_QUERIES),
+        help="Path to queries.yaml (default: config/queries.yaml)",
+    )
+    parser.add_argument(
+        "--servers-file",
+        "--servers",
+        dest="servers_file",
+        default=str(DEFAULT_SERVERS),
+        help="Path to servers.yaml (default: config/servers.yaml)",
+    )
     parser.add_argument(
         "--only",
         help="Comma-separated server ids to include (default: all in servers.yaml)",
@@ -238,7 +251,7 @@ def main() -> int:
     args = parser.parse_args()
 
     queries_path = Path(args.queries)
-    servers_path = Path(args.servers)
+    servers_path = Path(args.servers_file)
     for p, kind in [(queries_path, "queries"), (servers_path, "servers")]:
         if not p.exists():
             print(f"ERROR: {kind} file not found: {p}", file=sys.stderr)
@@ -249,6 +262,15 @@ def main() -> int:
 
     if args.only:
         allow = {s.strip() for s in args.only.split(",") if s.strip()}
+        known = {s.get("id") for s in servers_cfg}
+        unknown = allow - known
+        if unknown:
+            print(
+                f"ERROR: --only contains unknown server id(s): {', '.join(sorted(unknown))}",
+                file=sys.stderr,
+            )
+            print(f"  Valid ids: {', '.join(sorted(i for i in known if i))}", file=sys.stderr)
+            return 2
         servers_cfg = [s for s in servers_cfg if s.get("id") in allow]
 
     print("Probing servers:")
