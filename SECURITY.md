@@ -14,5 +14,5 @@ For vulnerabilities in the FHIR servers themselves, report upstream to the respe
 
 ## What this repo is and is not
 
-- **Is:** a reproducible comparison harness that stands up 7 OSS FHIR servers locally and runs the same test suite against each.
+- **Is:** a reproducible comparison harness that stands up 6 OSS FHIR servers locally and runs the same test suite against each.
 - **Is not:** a production deployment guide, a certified certification suite, or a security audit tool.

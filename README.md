@@ -2,7 +2,7 @@
 
 A runnable companion to the blog post [Same FHIR, Different Answers: Comparing 5 FHIR Servers](https://mock.health/blog/fhir-server-compare).
 
-Load one Synthea patient into seven open-source FHIR servers, run the same queries against each, and see which servers agree and which diverge — on your own machine, against your own data. Every server runs locally via `docker compose up`; no paid licenses, no managed services, no cloud accounts.
+Load one Synthea patient into six open-source FHIR servers, run the same queries against each, and see which servers agree and which diverge — on your own machine, against your own data. Every server runs locally via `docker compose up`; no paid licenses, no managed services, no cloud accounts.
 
 | Server | Version | License | Image |
 |--------|---------|---------|-------|
@@ -15,6 +15,14 @@ Load one Synthea patient into seven open-source FHIR servers, run the same queri
 
 Images are pinned by sha256 digest in `docker-compose.yml` so the stack is byte-for-byte reproducible across machines and time.
 
+## Prerequisites
+
+- Docker + Docker Compose v2.
+- Python ≥ 3.11.
+- Java (JDK 11+) and `git` on `$PATH` — Synthea is cloned and built locally on first use to generate the patient bundles.
+- Single-patient matrix (`compare.py`): runs on any laptop. ~8 GB RAM is plenty.
+- Loadtest ramp (`make loadtest-ramp-50k`): expects a beefy host. The loadtest overlay caps each server at 12 CPU / 128 GB RAM with `cpuset: 0-11,16-27`, so the canonical run targets 24 physical cores and ~256 GB RAM. Smaller hosts work for `make loadtest-dryrun`, but published numbers come from the canonical shape.
+
 ## Quickstart
 
 ```bash
@@ -24,7 +32,9 @@ docker compose up -d
 # wait ~60s for all services to come up
 
 pip install -e .
-python -m fhirbench.load_bundle --server hapi
+python -m fhirbench.load_bundle --server hapi      # first call clones+builds
+                                                   # Synthea (~45s) and generates
+                                                   # one deterministic patient
 python -m fhirbench.load_bundle --server aidbox
 python -m fhirbench.load_bundle --server medplum
 python -m fhirbench.load_bundle --server msfhir
@@ -32,6 +42,8 @@ python -m fhirbench.load_bundle --server blaze
 python -m fhirbench.load_bundle --server spark
 python -m fhirbench.compare
 ```
+
+The first `load_bundle` call generates the patient bundle on demand: Synthea is cloned + built into `./synthea/`, run with seed 42 against Massachusetts/Boston, and the resulting bundle lands in `data/loadtest/fhir/` (along with `data/loadtest/prerequisites/` for the practitioner + hospital references). Every subsequent `load_bundle` reuses the same files, so all six servers ingest byte-identical bundles. Synthea needs Java and `git` on `$PATH`; pass `--bundle path.json` to use your own.
 
 `fhirbench.compare` probes every server in `config/servers.yaml` and only includes the ones that respond. Servers that aren't up or aren't reachable are skipped with a one-line log — no flags needed to opt out.
 
@@ -44,7 +56,7 @@ python -m fhirbench.load_bundle --server hapi
 python -m fhirbench.compare
 ```
 
-The matrix shows one column (HAPI) and the verdict column documents the expected behavior for the other six servers.
+The matrix shows one column (HAPI) and the verdict column documents the expected behavior for the other five servers.
 
 ## What the matrix demonstrates
 
@@ -96,7 +108,7 @@ Per-query p50/p95/p99 is preserved in `evidence[].per_verb[]` in the round artif
 A parallel TestScript-based matrix checks each server against a collection of FHIR R4 base, SMART-on-FHIR, and Bulk Data v2 conformance profiles. Each cell is pass / fail / skipped with a spec citation.
 
 ```bash
-make conformance-run       # execute TestScripts against all 7 servers
+make conformance-run       # execute TestScripts against all 6 servers
 make conformance-parse     # fold into results/rounds/<id>/conformance.json
 make conformance-validate  # schema-check the round artifact
 ```
