@@ -494,11 +494,23 @@ def run_ramp(
 
 
 def parse_checkpoints(spec: str) -> tuple[int, ...]:
-    return tuple(int(x.strip()) for x in spec.split(",") if x.strip())
+    parts = [x.strip() for x in spec.split(",") if x.strip()]
+    out = []
+    for p in parts:
+        try:
+            out.append(int(p))
+        except ValueError:
+            raise SystemExit(
+                f"ERROR: --checkpoints must be comma-separated integers, got '{p}'"
+            )
+    return tuple(out)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("--run-id", required=True)
     ap.add_argument("--checkpoints", required=True,
                     help="Comma-separated patient counts. Each checkpoint is run cold against every server.")

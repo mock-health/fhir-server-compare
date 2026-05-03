@@ -21,7 +21,7 @@ Profiles deliberately scoped to a **kickoff** subset carry that word in the colu
 
 ### Why SMART is not a column in v0.3
 
-The SMART discovery profile was scored in v0.1–v0.2 but dropped from the v0.3 matrix. Reason: three of the seven roster servers (HAPI, MS FHIR, Blaze) do not ship SMART discovery in their default Docker image. Their failures reflect **compose configuration choices** (no OAuth provider bolted on, security disabled for loadtest parity), not intrinsic server behavior. A column where half the reds measure our ops setup rather than the vendor's code was misleading readers, so I retired it.
+The SMART discovery profile was scored in v0.1–v0.2 but dropped from the v0.3 matrix. Reason: three of the six roster servers (HAPI, MS FHIR, Blaze) do not ship SMART discovery in their default Docker image. Their failures reflect **compose configuration choices** (no OAuth provider bolted on, security disabled for loadtest parity), not intrinsic server behavior. A column where half the reds measure our ops setup rather than the vendor's code was misleading readers, so I retired it.
 
 The TestScripts and profile spec are preserved under `conformance/{profiles,testscripts}/_archived/smart-on-fhir-v2/` for revival in Round 1 when I pair each server with the vendor-recommended OAuth layer (Keycloak/smart-launcher for HAPI, Azure AD for MS FHIR, etc.) and can produce a fair apples-to-apples comparison.
 
@@ -112,7 +112,7 @@ cp .env.example .env       # fill in AIDBOX_LICENSE (free) and MEDPLUM_CLIENT_*
 # Bring up servers WITH conformance feature flags enabled:
 docker compose -f docker-compose.yml -f docker-compose.conformance-features.yml up -d
 
-# Run the conformance sIep against all 7 (smoke-checks /metadata before each profile):
+# Run the conformance step against all 6 (smoke-checks /metadata before each profile):
 make conformance CONF_ROUND=2026-q2-r000
 
 # Inspect the matrix (all 3 profiles):
